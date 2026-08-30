@@ -718,7 +718,7 @@ export default function AlertFeed({ alerts: propAlerts = [], stats: propStats, s
       return current.map(a => (a && a.id === id) ? { ...a, status: 'resolved' } : a);
     });
     resolveAlert(id).catch(() => {});
-    if (onAlertResolved) onAlertResolved(id);
+    if (onAlertResolved) onAlertResolved(id, 'resolved');
   }, [onAlertResolved]);
 
   // Direct 1-Click Instant False Alarm Dismissal Handler
@@ -728,7 +728,7 @@ export default function AlertFeed({ alerts: propAlerts = [], stats: propStats, s
       return current.map(a => (a && a.id === id) ? { ...a, status: 'false_alarm' } : a);
     });
     rejectAlert(id).catch(() => {});
-    if (onAlertResolved) onAlertResolved(id);
+    if (onAlertResolved) onAlertResolved(id, 'false_alarm');
   }, [onAlertResolved]);
 
   const toggleCollapse = useCallback((id) => {
@@ -895,7 +895,7 @@ export default function AlertFeed({ alerts: propAlerts = [], stats: propStats, s
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
             <span className="font-mono tabular-nums" style={{ fontSize: '1.75em', fontWeight: 700, color: 'var(--color-text-primary)' }}>
-              {stats.total !== undefined ? stats.total : alerts.length}
+              {Math.max(Number(stats.total || 0), safeAlerts.length, activeAlerts.length + resolvedAlerts.length + falseAlarmAlerts.length)}
             </span>
             <span style={{ fontSize: '0.78em', color: 'var(--color-text-secondary)' }}>
               all-time logged
@@ -975,14 +975,14 @@ export default function AlertFeed({ alerts: propAlerts = [], stats: propStats, s
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
             <span className="font-mono tabular-nums" style={{ fontSize: '1.75em', fontWeight: 700, color: 'var(--color-text-primary)' }}>
-              {stats.resolved !== undefined ? (stats.resolved + (stats.false_alarm || 0)) : (resolvedAlerts.length + falseAlarmAlerts.length)}
+              {Math.max(Number((stats.resolved || 0) + (stats.false_alarm || 0)), resolvedAlerts.length + falseAlarmAlerts.length)}
             </span>
             <span style={{ fontSize: '0.78em', color: 'var(--color-text-secondary)' }}>
               incidents actioned
             </span>
           </div>
           <div style={{ fontSize: '0.74em', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-            {stats.resolved !== undefined ? stats.resolved : resolvedAlerts.length} Resolved • {stats.false_alarm !== undefined ? stats.false_alarm : falseAlarmAlerts.length} False Alarms
+            {Math.max(Number(stats.resolved || 0), resolvedAlerts.length)} Resolved • {Math.max(Number(stats.false_alarm || 0), falseAlarmAlerts.length)} False Alarms
           </div>
         </div>
 

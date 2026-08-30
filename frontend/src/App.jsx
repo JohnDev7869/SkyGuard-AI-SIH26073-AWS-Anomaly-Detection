@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import NetworkMap from './components/NetworkMap';
 import StationDetail from './components/StationDetail';
 import AlertFeed from './components/AlertFeed';
@@ -102,6 +102,12 @@ export default function App() {
   const [lastMessageTimestamp, setLastMessageTimestamp] = useState(Date.now());
   const [secondsAgo, setSecondsAgo] = useState(0);
 
+  // Keep a live ref to stations for background simulation tick without restarting useEffect
+  const stationsRef = useRef(stations);
+  useEffect(() => {
+    stationsRef.current = stations;
+  }, [stations]);
+
   // Synchronize state changes to localStorage
   useEffect(() => {
     if (stats && typeof stats === 'object' && !Array.isArray(stats)) {
@@ -143,34 +149,22 @@ export default function App() {
     return () => clearInterval(timer);
   }, [lastMessageTimestamp]);
 
-  const refreshSimStatus = () => {
-    getSimStatus().then(status => {
-      if (status && typeof status === 'object') setSimStatus(status);
-    }).catch(() => {});
-  };
-
-  const refreshSystemMetrics = () => {
-    getSystemMetrics().then(m => {
-      if (m && typeof m === 'object') setSystemMetrics(m);
-    }).catch(() => {});
-  };
-
   const refreshAll = useCallback(() => {
     getStations().then(data => {
       if (Array.isArray(data) && data.length > 0) setStations(data);
-      else setStations(DEFAULT_INDIAN_STATIONS);
-    }).catch(() => setStations(DEFAULT_INDIAN_STATIONS));
+    }).catch(() => {});
 
     getAlerts('all', 500).then(data => {
       if (Array.isArray(data)) setAlerts(data);
-      else setAlerts([]);
-    }).catch(() => setAlerts([]));
+    }).catch(() => {});
 
     getAlertStats().then(data => {
       if (data && typeof data === 'object' && !Array.isArray(data)) setStats(data);
     }).catch(() => {});
 
-    refreshSystemMetrics();
+    getSystemMetrics().then(m => {
+      if (m && typeof m === 'object') setSystemMetrics(m);
+    }).catch(() => {});
   }, []);
 
   // Real-Time Browser Anomaly Generator & Live Telemetry Stream (20-28 events/min)
@@ -178,7 +172,9 @@ export default function App() {
     if (!simStatus.is_running) return;
 
     const simInterval = setInterval(() => {
-      const generatedAlerts = shouldTriggerScheduledAnomaly(stations);
+      const currentStations = stationsRef.current || DEFAULT_INDIAN_STATIONS;
+      const generatedAlerts = shouldTriggerScheduledAnomaly(currentStations);
+      
       if (generatedAlerts && generatedAlerts.length > 0) {
         setAlerts(prev => {
           const current = Array.isArray(prev) ? prev : [];
@@ -230,12 +226,11 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(simInterval);
-  }, [simStatus.is_running, stations]);
+  }, [simStatus.is_running]);
 
-  // Periodic Backend Synchronization (if FastAPI server is available)
+  // Periodic Backend Synchronization (only if real FastAPI server is responding)
   useEffect(() => {
     refreshAll();
-    refreshSimStatus();
 
     const pollInterval = setInterval(() => {
       getAlertStats().then(data => {
@@ -246,22 +241,19 @@ export default function App() {
         if (Array.isArray(data) && data.length > 0) setStations(data);
       }).catch(() => {});
 
-      refreshSystemMetrics();
-    }, 3000);
+      getSystemMetrics().then(m => {
+        if (m && typeof m === 'object') setSystemMetrics(m);
+      }).catch(() => {});
+    }, 4000);
 
     let ws = null;
     try {
-      let wsUrl = 'ws://127.0.0.1:8000';
-      if (typeof window !== 'undefined' && window.location && window.location.host && !window.location.host.includes('netlify.app')) {
+      if (typeof window !== 'undefined' && window.location && !window.location.host.includes('netlify.app')) {
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsUrl = `${proto}//${window.location.host}`;
-      }
-      if (import.meta.env.VITE_API_URL) {
-        wsUrl = import.meta.env.VITE_API_URL.replace('http', 'ws');
-      }
-      
-      // Connect to WebSocket if not on pure static hosting
-      if (!window.location.host.includes('netlify.app')) {
+        let wsUrl = `${proto}//${window.location.host}`;
+        if (import.meta.env.VITE_API_URL) {
+          wsUrl = import.meta.env.VITE_API_URL.replace('http', 'ws');
+        }
         ws = new WebSocket(`${wsUrl}/ws/alerts`);
         
         ws.onmessage = (event) => {
@@ -283,46 +275,10 @@ export default function App() {
                 warning: (prev.warning || 0) + (newAlert.severity !== 'high' ? 1 : 0),
                 active: (prev.active || 0) + 1
               }));
-            } else if (msg.type === 'INCIDENT_UPDATED' && msg.data) {
-              const updatedAlert = msg.data;
-              setAlerts(prev => {
-                const current = Array.isArray(prev) ? prev : [];
-                const exists = current.some(a => a && a.id === updatedAlert.id);
-                if (exists) {
-                  return current.map(a => (a && a.id === updatedAlert.id) ? {
-                    ...a,
-                    last_seen: updatedAlert.last_seen,
-                    occurrence_count: updatedAlert.occurrence_count,
-                    severity: updatedAlert.severity,
-                    confidence: updatedAlert.confidence,
-                    raw_value_json: a.raw_value_json || updatedAlert.raw_value_json,
-                    corrected_value_json: a.corrected_value_json || updatedAlert.corrected_value_json,
-                    shap_json: a.shap_json || updatedAlert.shap_json,
-                    explanation_json: a.explanation_json || updatedAlert.explanation_json
-                  } : a);
-                } else {
-                  return [updatedAlert, ...current].slice(0, 500);
-                }
-              });
-            } else if ((msg.type === 'ALERT_RESOLVED' || msg.type === 'ALERT_REJECTED') && msg.data) {
-              const alertId = msg.data.alert_id;
-              let wasCritical = false;
-              setAlerts(prev => {
-                const current = Array.isArray(prev) ? prev : [];
-                const target = current.find(a => a && a.id === alertId);
-                if (target && target.severity === 'high') wasCritical = true;
-                return current.map(a => (a && a.id === alertId) ? { ...a, status: msg.data.status } : a);
-              });
-              setStats(prev => ({
-                ...prev,
-                active: Math.max(0, (prev.active || 0) - 1),
-                critical: wasCritical ? Math.max(0, (prev.critical || 0) - 1) : (prev.critical || 0),
-                warning: !wasCritical ? Math.max(0, (prev.warning || 0) - 1) : (prev.warning || 0),
-                resolved: msg.data.status === 'resolved' ? (prev.resolved || 0) + 1 : (prev.resolved || 0),
-                false_alarm: msg.data.status === 'false_alarm' || msg.data.status === 'rejected' ? (prev.false_alarm || 0) + 1 : (prev.false_alarm || 0)
-              }));
-            } else if (msg.type === 'SIMULATOR_STATE_CHANGED' && msg.data) {
-              setSimStatus(prev => ({ ...prev, ...msg.data }));
+            } else if (msg.type === 'ALERT_RESOLVED' || msg.type === 'ALERT_REJECTED') {
+              if (msg.data && msg.data.alert_id) {
+                handleAlertActioned(msg.data.alert_id, msg.data.status || 'resolved');
+              }
             }
           } catch (e) {}
         };
@@ -336,10 +292,7 @@ export default function App() {
   }, [refreshAll]);
 
   const handleToggleStream = async () => {
-    setSimStatus(prev => {
-      const nextRunning = !prev.is_running;
-      return { ...prev, is_running: nextRunning };
-    });
+    setSimStatus(prev => ({ ...prev, is_running: !prev.is_running }));
     toggleSimulator('stream').catch(() => {});
   };
 
@@ -375,43 +328,48 @@ export default function App() {
   }, []);
 
   const handleAlertActioned = useCallback((alertId, action) => {
-    let targetAlert = null;
     setAlerts(prev => {
       const current = Array.isArray(prev) ? prev : [];
-      targetAlert = current.find(a => a && a.id === alertId);
-      return current.map(a => (a && a.id === alertId) ? { ...a, status: action } : a);
-    });
+      const target = current.find(a => a && a.id === alertId);
+      if (!target) return current;
 
-    if (targetAlert) {
-      const wasCritical = targetAlert.severity === 'high';
-      setStats(prev => ({
-        ...prev,
-        active: Math.max(0, (prev.active || 0) - 1),
-        critical: wasCritical ? Math.max(0, (prev.critical || 0) - 1) : (prev.critical || 0),
-        warning: !wasCritical ? Math.max(0, (prev.warning || 0) - 1) : (prev.warning || 0),
-        resolved: action === 'resolved' ? (prev.resolved || 0) + 1 : (prev.resolved || 0),
-        false_alarm: action === 'false_alarm' ? (prev.false_alarm || 0) + 1 : (prev.false_alarm || 0)
+      const wasCritical = target.severity === 'high';
+      const updatedList = current.map(a => (a && a.id === alertId) ? { ...a, status: action } : a);
+
+      setStats(sPrev => ({
+        ...sPrev,
+        active: Math.max(0, (sPrev.active || 0) - 1),
+        critical: wasCritical ? Math.max(0, (sPrev.critical || 0) - 1) : (sPrev.critical || 0),
+        warning: !wasCritical ? Math.max(0, (sPrev.warning || 0) - 1) : (sPrev.warning || 0),
+        resolved: action === 'resolved' ? (sPrev.resolved || 0) + 1 : (sPrev.resolved || 0),
+        false_alarm: action === 'false_alarm' ? (sPrev.false_alarm || 0) + 1 : (sPrev.false_alarm || 0)
       }));
 
-      // Check if station has other active alerts
-      const stId = targetAlert.station_id;
-      setStations(prev => {
-        const current = Array.isArray(prev) ? prev : DEFAULT_INDIAN_STATIONS;
-        return current.map(st => {
-          if (st.station_id === stId) {
-            return {
-              ...st,
-              health: {
-                ...st.health,
-                rolling_anomaly_rate: 0.0,
-                maintenance_due_estimate: 'Healthy'
-              }
-            };
-          }
-          return st;
+      // Check if this station still has other active alerts
+      const stId = target.station_id;
+      const remainingStationActive = updatedList.filter(a => a && a.station_id === stId && (a.status === 'active' || !a.status));
+
+      if (remainingStationActive.length === 0) {
+        setStations(stPrev => {
+          const stCurrent = Array.isArray(stPrev) ? stPrev : DEFAULT_INDIAN_STATIONS;
+          return stCurrent.map(st => {
+            if (st.station_id === stId) {
+              return {
+                ...st,
+                health: {
+                  ...st.health,
+                  rolling_anomaly_rate: 0.0,
+                  maintenance_due_estimate: 'Healthy'
+                }
+              };
+            }
+            return st;
+          });
         });
-      });
-    }
+      }
+
+      return updatedList;
+    });
   }, []);
 
   const navItemStyle = (id) => ({

@@ -147,8 +147,12 @@ export default function NetworkMap({ stations = [], alerts = [], onSelectStation
   // Single Shared Source of Truth Node Color Logic strictly based on fault rate thresholds
   const getNodeColor = (stationId) => {
     const stationObj = safeStations.find(st => st && st.station_id === stationId);
+    const stationAlerts = activeAlerts.filter(a => a && a.station_id === stationId);
     const health = stationObj?.health || {};
-    const rate = Number(health.rolling_anomaly_rate !== undefined ? health.rolling_anomaly_rate : 0);
+    const rate = Number(health.rolling_anomaly_rate !== undefined && health.rolling_anomaly_rate > 0 
+      ? health.rolling_anomaly_rate 
+      : (stationAlerts.length > 0 ? Math.min(0.38, 0.12 + (stationAlerts.length - 1) * 0.06) : 0.0)
+    );
 
     // Strictly matches the legend & health badge (<10% Healthy, 10-25% Warning, >25% Critical)
     if (rate > WARNING_MAX) {

@@ -11,9 +11,23 @@ export default function HealthPanel({ stations = [], alerts = [], onSelect }) {
   
   // Filter valid station objects and sort strictly by rolling fault rate descending
   const validStations = safeStations.filter(s => s && s.station_id && s.name);
+  
+  const getStationFaultRate = (s) => {
+    const stationAlerts = activeAlerts.filter(a => a && a.station_id === s.station_id);
+    const hasActive = stationAlerts.length > 0;
+    const h = s.health || {};
+    if (h.rolling_anomaly_rate !== undefined && Number(h.rolling_anomaly_rate) > 0) {
+      return Number(h.rolling_anomaly_rate);
+    }
+    if (hasActive) {
+      return Math.min(0.38, 0.12 + (stationAlerts.length - 1) * 0.06);
+    }
+    return 0.0;
+  };
+
   const sortedStations = [...validStations].sort((a, b) => {
-    const aRate = Number(a.health?.rolling_anomaly_rate || 0);
-    const bRate = Number(b.health?.rolling_anomaly_rate || 0);
+    const aRate = getStationFaultRate(a);
+    const bRate = getStationFaultRate(b);
     return bRate - aRate;
   });
 
@@ -70,11 +84,10 @@ export default function HealthPanel({ stations = [], alerts = [], onSelect }) {
           </thead>
           <tbody>
             {sortedStations.map(s => {
-              const stationAlerts = activeAlerts.filter(a => a.station_id === s.station_id);
+              const stationAlerts = activeAlerts.filter(a => a && a.station_id === s.station_id);
               const hasActive = stationAlerts.length > 0;
               
-              const h = s.health || {};
-              const rate = Number(h.rolling_anomaly_rate !== undefined ? h.rolling_anomaly_rate : 0);
+              const rate = getStationFaultRate(s);
               
               // Priority 0: Status badge is a 100% PURE function of rolling fault rate
               let label = 'Healthy';

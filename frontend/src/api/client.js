@@ -36,6 +36,7 @@ export const DEFAULT_INDIAN_STATIONS = [
 
 const isArray = (v) => Array.isArray(v);
 const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isHtml = (data) => typeof data === 'string' && (data.includes('<!doctype') || data.includes('<html') || data.includes('<!DOCTYPE'));
 
 export const generateMockReadings = (stationId) => {
   const station = DEFAULT_INDIAN_STATIONS.find(s => s.station_id === stationId) || DEFAULT_INDIAN_STATIONS[0];
@@ -60,33 +61,46 @@ export const generateMockReadings = (stationId) => {
   return list;
 };
 
+// When backend is active JSON endpoint, return data; otherwise return null to preserve client session
 export const getStations = () => apiClient.get('/api/stations')
-  .then(r => (isArray(r.data) && r.data.length > 0 ? r.data : DEFAULT_INDIAN_STATIONS))
-  .catch(() => DEFAULT_INDIAN_STATIONS);
+  .then(r => (!isHtml(r.data) && isArray(r.data) && r.data.length > 0 ? r.data : null))
+  .catch(() => null);
 
 export const getReadings = (stationId) => apiClient.get(`/api/stations/${stationId}/readings`)
-  .then(r => (isArray(r.data) && r.data.length > 0 ? r.data : generateMockReadings(stationId)))
+  .then(r => (!isHtml(r.data) && isArray(r.data) && r.data.length > 0 ? r.data : generateMockReadings(stationId)))
   .catch(() => generateMockReadings(stationId));
 
 export const getStationHealth = (stationId) => apiClient.get(`/api/stations/${stationId}/health`)
-  .then(r => (isObject(r.data) ? r.data : null))
+  .then(r => (!isHtml(r.data) && isObject(r.data) ? r.data : null))
   .catch(() => null);
 
 export const getAlerts = (status = 'all', limit = 500) => apiClient.get(`/api/alerts?status=${status}&limit=${limit}`)
-  .then(r => (isArray(r.data) ? r.data : []))
-  .catch(() => []);
+  .then(r => (!isHtml(r.data) && isArray(r.data) ? r.data : null))
+  .catch(() => null);
 
 export const getAlertStats = () => apiClient.get('/api/alerts/stats')
-  .then(r => (isObject(r.data) ? r.data : { total: 0, critical: 0, warning: 0, resolved: 0, active: 0, false_alarm: 0, precision_rate: 98.0 }))
-  .catch(() => ({ total: 0, critical: 0, warning: 0, resolved: 0, active: 0, false_alarm: 0, precision_rate: 98.0 }));
+  .then(r => (!isHtml(r.data) && isObject(r.data) ? r.data : null))
+  .catch(() => null);
 
-export const resolveAlert = (alertId) => apiClient.post(`/api/alerts/${alertId}/resolve`).then(r => r.data).catch(() => ({ status: 'resolved' }));
-export const rejectAlert = (alertId) => apiClient.post(`/api/alerts/${alertId}/reject`).then(r => r.data).catch(() => ({ status: 'false_alarm' }));
-export const resetAllData = () => apiClient.post('/api/alerts/reset').then(r => r.data).catch(() => ({ status: 'ok' }));
-export const injectManualFault = (payload) => apiClient.post('/api/simulator/inject-manual', payload).then(r => r.data).catch(() => ({ status: 'injected', ...payload }));
+export const resolveAlert = (alertId) => apiClient.post(`/api/alerts/${alertId}/resolve`)
+  .then(r => r.data)
+  .catch(() => ({ status: 'resolved' }));
+
+export const rejectAlert = (alertId) => apiClient.post(`/api/alerts/${alertId}/reject`)
+  .then(r => r.data)
+  .catch(() => ({ status: 'false_alarm' }));
+
+export const resetAllData = () => apiClient.post('/api/alerts/reset')
+  .then(r => r.data)
+  .catch(() => ({ status: 'ok' }));
+
+export const injectManualFault = (payload) => apiClient.post('/api/simulator/inject-manual', payload)
+  .then(r => r.data)
+  .catch(() => ({ status: 'injected', ...payload }));
+
 export const getSimStatus = () => apiClient.get('/api/simulator/status')
-  .then(r => (isObject(r.data) ? r.data : { is_running: true, injection_enabled: true }))
-  .catch(() => ({ is_running: true, injection_enabled: true }));
+  .then(r => (!isHtml(r.data) && isObject(r.data) ? r.data : null))
+  .catch(() => null);
 
 export const toggleSimulator = (action = 'stream') => {
   const endpoint = action === 'injection' ? '/api/simulator/toggle-injection' : '/api/simulator/toggle-stream';
@@ -94,9 +108,9 @@ export const toggleSimulator = (action = 'stream') => {
 };
 
 export const getDetectionMetrics = () => apiClient.get('/api/metrics/detection')
-  .then(r => (isObject(r.data) ? r.data : { tp: 48, fp: 1, fn: 1, tn: 450, precision: 98.0, recall: 98.0, f1_score: 98.0, accuracy: 99.6 }))
-  .catch(() => ({ tp: 48, fp: 1, fn: 1, tn: 450, precision: 98.0, recall: 98.0, f1_score: 98.0, accuracy: 99.6 }));
+  .then(r => (!isHtml(r.data) && isObject(r.data) ? r.data : null))
+  .catch(() => null);
 
 export const getSystemMetrics = () => apiClient.get('/api/metrics/system')
-  .then(r => (isObject(r.data) ? r.data : { avg_latency_ms: 2.1, p95_latency_ms: 3.8, throughput_rps: 12.5, active_stations: 25, uptime_seconds: 120, total_readings_processed: 1500 }))
-  .catch(() => ({ avg_latency_ms: 2.1, p95_latency_ms: 3.8, throughput_rps: 12.5, active_stations: 25, uptime_seconds: 120, total_readings_processed: 1500 }));
+  .then(r => (!isHtml(r.data) && isObject(r.data) ? r.data : null))
+  .catch(() => null);

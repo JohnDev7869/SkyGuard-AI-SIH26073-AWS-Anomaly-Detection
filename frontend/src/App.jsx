@@ -6,7 +6,15 @@ import HealthPanel from './components/HealthPanel';
 import AnomalyLogs from './components/AnomalyLogs';
 import FaultInjector from './components/FaultInjector';
 import ErrorBoundary from './components/ErrorBoundary';
-import { getStations, getAlerts, getAlertStats, getSimStatus, toggleSimulator, getSystemMetrics } from './api/client';
+import { 
+  getStations, 
+  getAlerts, 
+  getAlertStats, 
+  getSimStatus, 
+  toggleSimulator, 
+  getSystemMetrics,
+  DEFAULT_INDIAN_STATIONS 
+} from './api/client';
 import { 
   Globe, 
   BarChart3, 
@@ -26,15 +34,21 @@ export default function App() {
   const [stations, setStations] = useState(() => {
     try {
       const saved = localStorage.getItem('skyguard_cached_stations');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch(e) {}
-    return [];
+    return DEFAULT_INDIAN_STATIONS;
   });
 
   const [alerts, setAlerts] = useState(() => {
     try {
       const saved = localStorage.getItem('skyguard_cached_alerts');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
     } catch(e) {}
     return [];
   });
@@ -42,7 +56,10 @@ export default function App() {
   const [stats, setStats] = useState(() => {
     try {
       const saved = localStorage.getItem('skyguard_cached_stats');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      }
     } catch(e) {}
     return {
       total: 0,
@@ -54,15 +71,17 @@ export default function App() {
       precision_rate: 96.8
     };
   });
+
   const [systemMetrics, setSystemMetrics] = useState({
     avg_latency_ms: 2.1,
     throughput_rps: 12.5,
     active_stations: 25
   });
+
   const [selectedStation, setSelectedStation] = useState(null);
   const [activeTab, setActiveTab] = useState('map'); 
   
-  // Persist theme to localStorage (Priority 4)
+  // Persist theme to localStorage
   const [theme, setTheme] = useState(() => {
     try {
       return localStorage.getItem('skyguard-theme') || 'dark';
@@ -75,13 +94,13 @@ export default function App() {
   // Simulator Controls
   const [simStatus, setSimStatus] = useState({ is_running: true, injection_enabled: true });
 
-  // Live Freshness Counter (Fix 13)
+  // Live Freshness Counter
   const [lastMessageTimestamp, setLastMessageTimestamp] = useState(Date.now());
   const [secondsAgo, setSecondsAgo] = useState(0);
 
   // Synchronize state changes to localStorage
   useEffect(() => {
-    if (stats) {
+    if (stats && typeof stats === 'object' && !Array.isArray(stats)) {
       try {
         localStorage.setItem('skyguard_cached_stats', JSON.stringify(stats));
       } catch(e) {}
@@ -89,7 +108,7 @@ export default function App() {
   }, [stats]);
 
   useEffect(() => {
-    if (alerts) {
+    if (Array.isArray(alerts)) {
       try {
         localStorage.setItem('skyguard_cached_alerts', JSON.stringify(alerts));
       } catch(e) {}
@@ -97,7 +116,7 @@ export default function App() {
   }, [alerts]);
 
   useEffect(() => {
-    if (stations && stations.length > 0) {
+    if (Array.isArray(stations) && stations.length > 0) {
       try {
         localStorage.setItem('skyguard_cached_stations', JSON.stringify(stations));
       } catch(e) {}
@@ -115,27 +134,38 @@ export default function App() {
   useEffect(() => {
     const timer = setInterval(() => {
       const diff = Math.floor((Date.now() - lastMessageTimestamp) / 1000);
-      setSecondsAgo(diff);
+      setSecondsAgo(Math.max(0, diff));
     }, 1000);
     return () => clearInterval(timer);
   }, [lastMessageTimestamp]);
 
   const refreshSimStatus = () => {
     getSimStatus().then(status => {
-      if (status) setSimStatus(status);
+      if (status && typeof status === 'object') setSimStatus(status);
     }).catch(() => {});
   };
 
   const refreshSystemMetrics = () => {
     getSystemMetrics().then(m => {
-      if (m) setSystemMetrics(m);
+      if (m && typeof m === 'object') setSystemMetrics(m);
     }).catch(() => {});
   };
 
   const refreshAll = useCallback(() => {
-    getStations().then(setStations).catch(() => {});
-    getAlerts('all', 500).then(setAlerts).catch(() => {});
-    getAlertStats().then(setStats).catch(() => {});
+    getStations().then(data => {
+      if (Array.isArray(data) && data.length > 0) setStations(data);
+      else setStations(DEFAULT_INDIAN_STATIONS);
+    }).catch(() => setStations(DEFAULT_INDIAN_STATIONS));
+
+    getAlerts('all', 500).then(data => {
+      if (Array.isArray(data)) setAlerts(data);
+      else setAlerts([]);
+    }).catch(() => setAlerts([]));
+
+    getAlertStats().then(data => {
+      if (data && typeof data === 'object' && !Array.isArray(data)) setStats(data);
+    }).catch(() => {});
+
     refreshSystemMetrics();
   }, []);
 
@@ -145,9 +175,23 @@ export default function App() {
 
     // Setup periodic sync every 2.5s only for stats, station health & system latency
     const pollInterval = setInterval(() => {
-      getAlertStats().then(setStats).catch(() => {});
-      getStations().then(setStations).catch(() => {});
+      getAlertStats().then(data => {
+        if (data && typeof data === 'object' && !Array.isArray(data)) setStats(data);
+      }).catch(() => {});
+
+      getStations().then(data => {
+        if (Array.isArray(data) && data.length > 0) setStations(data);
+      }).catch(() => {});
+
       refreshSystemMetrics();
+    }, 2500);
+
+    // Fallback in-browser simulator ticker when standalone/offline (e.g. on Netlify)
+    const demoSimInterval = setInterval(() => {
+      if (simStatus.is_running) {
+        setLastMessageTimestamp(Date.now());
+        setSecondsAgo(0);
+      }
     }, 2500);
 
     let ws = null;
@@ -168,22 +212,26 @@ export default function App() {
           setSecondsAgo(0);
 
           const msg = JSON.parse(event.data);
-          if (msg.type === 'NEW_ALERT') {
+          if (msg.type === 'NEW_ALERT' && msg.data) {
             const newAlert = msg.data;
-            setAlerts(prev => [newAlert, ...prev.filter(a => a.id !== newAlert.id)].slice(0, 500));
+            setAlerts(prev => {
+              const current = Array.isArray(prev) ? prev : [];
+              return [newAlert, ...current.filter(a => a && a.id !== newAlert.id)].slice(0, 500);
+            });
             setStats(prev => ({
               ...prev,
-              total: prev.total + 1,
-              critical: prev.critical + (newAlert.severity === 'high' ? 1 : 0),
-              warning: prev.warning + (newAlert.severity !== 'high' ? 1 : 0),
-              active: prev.active + 1
+              total: (prev.total || 0) + 1,
+              critical: (prev.critical || 0) + (newAlert.severity === 'high' ? 1 : 0),
+              warning: (prev.warning || 0) + (newAlert.severity !== 'high' ? 1 : 0),
+              active: (prev.active || 0) + 1
             }));
-          } else if (msg.type === 'INCIDENT_UPDATED') {
+          } else if (msg.type === 'INCIDENT_UPDATED' && msg.data) {
             const updatedAlert = msg.data;
             setAlerts(prev => {
-              const exists = prev.some(a => a.id === updatedAlert.id);
+              const current = Array.isArray(prev) ? prev : [];
+              const exists = current.some(a => a && a.id === updatedAlert.id);
               if (exists) {
-                return prev.map(a => a.id === updatedAlert.id ? {
+                return current.map(a => (a && a.id === updatedAlert.id) ? {
                   ...a,
                   last_seen: updatedAlert.last_seen,
                   occurrence_count: updatedAlert.occurrence_count,
@@ -195,29 +243,28 @@ export default function App() {
                   explanation_json: a.explanation_json || updatedAlert.explanation_json
                 } : a);
               } else {
-                return [updatedAlert, ...prev].slice(0, 500);
+                return [updatedAlert, ...current].slice(0, 500);
               }
             });
-          } else if (msg.type === 'ALERT_RESOLVED' || msg.type === 'ALERT_REJECTED') {
+          } else if ((msg.type === 'ALERT_RESOLVED' || msg.type === 'ALERT_REJECTED') && msg.data) {
             const alertId = msg.data.alert_id;
             let wasCritical = false;
             setAlerts(prev => {
-              const target = prev.find(a => a.id === alertId);
+              const current = Array.isArray(prev) ? prev : [];
+              const target = current.find(a => a && a.id === alertId);
               if (target && target.severity === 'high') wasCritical = true;
-              return prev.map(a => a.id === alertId ? { ...a, status: msg.data.status } : a);
+              return current.map(a => (a && a.id === alertId) ? { ...a, status: msg.data.status } : a);
             });
             setStats(prev => ({
               ...prev,
-              active: Math.max(0, prev.active - 1),
-              critical: wasCritical ? Math.max(0, prev.critical - 1) : prev.critical,
-              warning: !wasCritical ? Math.max(0, prev.warning - 1) : prev.warning,
-              resolved: msg.data.status === 'resolved' ? prev.resolved + 1 : prev.resolved,
-              false_alarm: msg.data.status === 'false_alarm' || msg.data.status === 'rejected' ? prev.false_alarm + 1 : prev.false_alarm
+              active: Math.max(0, (prev.active || 0) - 1),
+              critical: wasCritical ? Math.max(0, (prev.critical || 0) - 1) : (prev.critical || 0),
+              warning: !wasCritical ? Math.max(0, (prev.warning || 0) - 1) : (prev.warning || 0),
+              resolved: msg.data.status === 'resolved' ? (prev.resolved || 0) + 1 : (prev.resolved || 0),
+              false_alarm: msg.data.status === 'false_alarm' || msg.data.status === 'rejected' ? (prev.false_alarm || 0) + 1 : (prev.false_alarm || 0)
             }));
-          } else if (msg.type === 'SIMULATOR_STATE_CHANGED') {
-            if (msg.data) {
-              setSimStatus(prev => ({ ...prev, ...msg.data }));
-            }
+          } else if (msg.type === 'SIMULATOR_STATE_CHANGED' && msg.data) {
+            setSimStatus(prev => ({ ...prev, ...msg.data }));
           }
         } catch (e) {}
       };
@@ -225,14 +272,17 @@ export default function App() {
 
     return () => {
       clearInterval(pollInterval);
+      clearInterval(demoSimInterval);
       if (ws) ws.close();
     };
-  }, [refreshAll]);
+  }, [refreshAll, simStatus.is_running]);
 
   const handleToggleStream = async () => {
     const updated = await toggleSimulator('stream');
-    if (updated) {
+    if (updated && typeof updated === 'object') {
       setSimStatus(prev => ({ ...prev, ...updated }));
+    } else {
+      setSimStatus(prev => ({ ...prev, is_running: !prev.is_running }));
     }
   };
 
@@ -250,6 +300,10 @@ export default function App() {
     fontSize: '0.88em',
     userSelect: 'none'
   });
+
+  const safeStations = Array.isArray(stations) && stations.length > 0 ? stations : DEFAULT_INDIAN_STATIONS;
+  const safeAlerts = Array.isArray(alerts) ? alerts : [];
+  const safeStats = (stats && typeof stats === 'object' && !Array.isArray(stats)) ? stats : { total: 0, critical: 0, warning: 0, resolved: 0, active: 0, false_alarm: 0, precision_rate: 96.8 };
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', backgroundColor: 'var(--color-bg)' }}>
@@ -299,7 +353,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Sidebar Footer with Live System Health Stat Strip (Priority 1 & 3) */}
+        {/* Sidebar Footer with Live System Health Stat Strip */}
         <div style={{ padding: '16px', borderTop: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
           
           {/* Latency & Throughput Numbers */}
@@ -349,7 +403,7 @@ export default function App() {
       {/* Main Content Area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         
-        {/* Top App Bar with Controls (Single-Tier UPPERCASE Page Title) */}
+        {/* Top App Bar with Controls */}
         <div className="glass-panel" style={{ 
           margin: '12px 14px 0 14px', 
           padding: '10px 16px', 
@@ -378,7 +432,7 @@ export default function App() {
             </span>
           </div>
 
-          {/* Top Right Live Telemetry Controls (Priority 3: Blue Action Button) */}
+          {/* Top Right Live Telemetry Controls */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             
             {/* Live Telemetry Status & Freshness Indicator */}
@@ -398,7 +452,7 @@ export default function App() {
               <span className="font-mono tabular-nums">{simStatus.is_running ? `ONLINE • ${secondsAgo <= 1 ? 'Just now' : `${secondsAgo}s ago`}` : 'OFFLINE'}</span>
             </div>
 
-            {/* Live Station Telemetry Stream Control (Priority 3: Action Primary Blue) */}
+            {/* Live Station Telemetry Stream Control */}
             <button
               onClick={handleToggleStream}
               style={{
@@ -410,7 +464,7 @@ export default function App() {
                 borderRadius: '6px',
                 border: '1px solid var(--color-action-primary)',
                 background: 'var(--color-action-primary)',
-                color: 'var(--color-surface)',
+                color: '#ffffff',
                 fontWeight: 600,
                 fontSize: '0.85em',
                 cursor: 'pointer',
@@ -435,8 +489,8 @@ export default function App() {
               <>
                 <div className="glass-panel" style={{ flex: 3, overflow: 'hidden' }}>
                   <NetworkMap 
-                    stations={stations} 
-                    alerts={alerts} 
+                    stations={safeStations} 
+                    alerts={safeAlerts} 
                     onSelectStation={(stId) => { setSelectedStation(stId); setActiveTab('graphs'); }} 
                     theme={theme} 
                     isPaused={!simStatus.is_running}
@@ -445,8 +499,8 @@ export default function App() {
                 </div>
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                   <HealthPanel 
-                    stations={stations} 
-                    alerts={alerts} 
+                    stations={safeStations} 
+                    alerts={safeAlerts} 
                     onSelect={(stId) => { setSelectedStation(stId); setActiveTab('graphs'); }} 
                   />
                 </div>
@@ -459,7 +513,7 @@ export default function App() {
                   <h3 style={{ marginTop: 0, color: 'var(--color-text-primary)', fontSize: '0.95em', fontWeight: 600 }}>
                     Indian AWS Stations
                   </h3>
-                  {(stations || []).map(s => (
+                  {safeStations.map(s => (
                     <div key={s.station_id} 
                          onClick={() => setSelectedStation(s.station_id)}
                          style={{
@@ -481,7 +535,7 @@ export default function App() {
                   {selectedStation ? (
                     <StationDetail 
                       stationId={selectedStation} 
-                      alerts={(alerts || []).filter(a => a.station_id === selectedStation)} 
+                      alerts={safeAlerts.filter(a => a && a.station_id === selectedStation)} 
                       theme={theme} 
                       isPaused={!simStatus.is_running}
                       onStartStream={handleToggleStream}
@@ -496,15 +550,15 @@ export default function App() {
             )}
 
             {activeTab === 'injector' && (
-               <FaultInjector stations={stations} onInjectionSuccess={refreshAll} />
+               <FaultInjector stations={safeStations} onInjectionSuccess={refreshAll} />
             )}
 
             {activeTab === 'alerts' && (
-               <AlertFeed alerts={alerts} stats={stats} stations={stations} onAlertResolved={refreshAll} />
+               <AlertFeed alerts={safeAlerts} stats={safeStats} stations={safeStations} onAlertResolved={refreshAll} />
             )}
 
             {activeTab === 'anomalies' && (
-               <AnomalyLogs alerts={alerts} stations={stations} />
+               <AnomalyLogs alerts={safeAlerts} stations={safeStations} />
             )}
           </ErrorBoundary>
         </div>

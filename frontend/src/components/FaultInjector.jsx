@@ -16,7 +16,8 @@ import {
   Clock
 } from 'lucide-react';
 
-export default function FaultInjector({ stations = [], onInjectionSuccess }) {
+export default function FaultInjector({ stations: propStations = [], onInjectionSuccess }) {
+  const stations = Array.isArray(propStations) ? propStations : [];
   const [selectedStationId, setSelectedStationId] = useState('');
   const [anomalyType, setAnomalyType] = useState('spike');
   const [targetChannel, setTargetChannel] = useState('temperature');
@@ -33,13 +34,16 @@ export default function FaultInjector({ stations = [], onInjectionSuccess }) {
   const [injectionHistory, setInjectionHistory] = useState([]);
 
   useEffect(() => {
-    if (stations && stations.length > 0 && !selectedStationId) {
-      setSelectedStationId(stations[0].station_id);
-      applyPreset('spike', stations[0], 'temperature');
+    if (stations.length > 0 && !selectedStationId) {
+      const first = stations[0];
+      if (first && first.station_id) {
+        setSelectedStationId(first.station_id);
+        applyPreset('spike', first, 'temperature');
+      }
     }
   }, [stations]);
 
-  const currentStation = (stations || []).find(s => s.station_id === selectedStationId) || (stations && stations[0]) || {};
+  const currentStation = stations.find(s => s && s.station_id === selectedStationId) || stations[0] || {};
 
   const applyPreset = (type, station = currentStation, channel = targetChannel, divMode = spatialDivMode) => {
     setAnomalyType(type);

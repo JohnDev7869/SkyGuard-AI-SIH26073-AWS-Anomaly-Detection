@@ -169,7 +169,7 @@ const IncidentCard = React.memo(function IncidentCard({
   const isActionable = (a.status === 'active' || !a.status);
   const confidenceScore = a.confidence ? (a.confidence * 100).toFixed(1) : '98.0';
 
-  const topFeatures = expl.top_features || [
+  const topFeatures = (expl && Array.isArray(expl.top_features) && expl.top_features.length > 0) ? expl.top_features : [
     { feature: "Statistical Z-Score", impact: 48.5 },
     { feature: "Rate of Change", impact: 32.1 },
     { feature: "Spatial Divergence", impact: 19.4 }
@@ -294,7 +294,7 @@ const IncidentCard = React.memo(function IncidentCard({
         <div style={{ color: 'var(--color-text-primary)', marginTop: '4px', fontSize: '0.8em', lineHeight: '1.4' }}>
           Target: <strong className="font-mono tabular-nums" style={{ color: 'var(--color-status-critical)' }}>{spatialEvidence?.target_temp || rawT || '44.0'}°C</strong> vs. 3 Nearest Nodes:
           <div style={{ marginTop: '3px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {(spatialEvidence?.nearest_neighbors || spatialEvidence?.neighbors || [
+            {(Array.isArray(spatialEvidence?.nearest_neighbors) ? spatialEvidence.nearest_neighbors : Array.isArray(spatialEvidence?.neighbors) ? spatialEvidence.neighbors : [
               { name: "Pune", temperature: 29.5, distance_km: 118 },
               { name: "Surat", temperature: 30.2, distance_km: 220 },
               { name: "Nashik", temperature: 28.8, distance_km: 140 }
@@ -633,15 +633,18 @@ const IncidentCard = React.memo(function IncidentCard({
   );
 });
 
-export default function AlertFeed({ alerts: propAlerts, stats: propStats, stations = [], onAlertResolved }) {
-  const [alerts, setAlerts] = useState(propAlerts || []);
+export default function AlertFeed({ alerts: propAlerts = [], stats: propStats, stations: propStations = [], onAlertResolved }) {
+  const [alerts, setAlerts] = useState(() => Array.isArray(propAlerts) ? propAlerts : []);
   const [collapsedAlerts, setCollapsedAlerts] = useState({});
   const [viewTab, setViewTab] = useState('active'); // 'active', 'false_alarms', 'resolved'
 
   const [localStats, setLocalStats] = useState(() => {
     try {
       const saved = localStorage.getItem('skyguard_cached_stats');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      }
     } catch(e) {}
     return {
       total: 0,
@@ -662,7 +665,8 @@ export default function AlertFeed({ alerts: propAlerts, stats: propStats, statio
     window_size: 500, total_readings_evaluated: 1200
   });
 
-  const stats = propStats || localStats;
+  const stats = (propStats && typeof propStats === 'object' && !Array.isArray(propStats)) ? propStats : localStats;
+  const stations = Array.isArray(propStations) ? propStations : [];
 
   // Filter States
   const [selectedStation, setSelectedStation] = useState('ALL');
@@ -674,13 +678,15 @@ export default function AlertFeed({ alerts: propAlerts, stats: propStats, statio
   const stableOrderRef = useRef([]);
 
   useEffect(() => {
-    if (propAlerts) {
+    if (Array.isArray(propAlerts)) {
       setAlerts(propAlerts);
+    } else {
+      setAlerts([]);
     }
   }, [propAlerts]);
 
   useEffect(() => {
-    if (propStats) {
+    if (propStats && typeof propStats === 'object' && !Array.isArray(propStats)) {
       setLocalStats(propStats);
     }
   }, [propStats]);
@@ -688,7 +694,7 @@ export default function AlertFeed({ alerts: propAlerts, stats: propStats, statio
   useEffect(() => {
     const fetchMetrics = () => {
       getDetectionMetrics().then(data => {
-        if (data) setDetectionMetrics(data);
+        if (data && typeof data === 'object') setDetectionMetrics(data);
       }).catch(() => {});
     };
     fetchMetrics();
@@ -698,7 +704,7 @@ export default function AlertFeed({ alerts: propAlerts, stats: propStats, statio
 
   const openMetricsModal = () => {
     getDetectionMetrics().then(data => {
-      if (data) setDetectionMetrics(data);
+      if (data && typeof data === 'object') setDetectionMetrics(data);
       setShowMetricsModal(true);
     }).catch(() => {
       setShowMetricsModal(true);
@@ -707,14 +713,20 @@ export default function AlertFeed({ alerts: propAlerts, stats: propStats, statio
 
   // Direct 1-Click Instant Resolution Handler
   const handleResolve = useCallback((id) => {
-    setAlerts(prev => prev.map(a => a.id === id ? { ...a, status: 'resolved' } : a));
+    setAlerts(prev => {
+      const current = Array.isArray(prev) ? prev : [];
+      return current.map(a => (a && a.id === id) ? { ...a, status: 'resolved' } : a);
+    });
     resolveAlert(id).catch(() => {});
     if (onAlertResolved) onAlertResolved(id);
   }, [onAlertResolved]);
 
   // Direct 1-Click Instant False Alarm Dismissal Handler
   const handleReject = useCallback((id) => {
-    setAlerts(prev => prev.map(a => a.id === id ? { ...a, status: 'false_alarm' } : a));
+    setAlerts(prev => {
+      const current = Array.isArray(prev) ? prev : [];
+      return current.map(a => (a && a.id === id) ? { ...a, status: 'false_alarm' } : a);
+    });
     rejectAlert(id).catch(() => {});
     if (onAlertResolved) onAlertResolved(id);
   }, [onAlertResolved]);
@@ -726,12 +738,14 @@ export default function AlertFeed({ alerts: propAlerts, stats: propStats, statio
     }));
   }, []);
 
-  // Group Alerts by status
-  const activeAlerts = alerts.filter(a => a.status === 'active' || !a.status);
-  const falseAlarmAlerts = alerts.filter(a => a.status === 'false_alarm' || a.status === 'rejected');
-  const resolvedAlerts = alerts.filter(a => a.status === 'resolved');
+  const safeAlerts = Array.isArray(alerts) ? alerts : [];
 
-  const activeCriticalCount = activeAlerts.filter(a => a.severity === 'high').length;
+  // Group Alerts by status
+  const activeAlerts = safeAlerts.filter(a => a && (a.status === 'active' || !a.status));
+  const falseAlarmAlerts = safeAlerts.filter(a => a && (a.status === 'false_alarm' || a.status === 'rejected'));
+  const resolvedAlerts = safeAlerts.filter(a => a && a.status === 'resolved');
+
+  const activeCriticalCount = activeAlerts.filter(a => a && a.severity === 'high').length;
 
   // Select list based on active tab
   let targetList = activeAlerts;
@@ -739,6 +753,7 @@ export default function AlertFeed({ alerts: propAlerts, stats: propStats, statio
   if (viewTab === 'resolved') targetList = resolvedAlerts;
 
   const filteredAlerts = targetList.filter(a => {
+    if (!a) return false;
     if (selectedStation !== 'ALL' && a.station_id !== selectedStation) return false;
     if (selectedSeverity !== 'ALL' && a.severity !== selectedSeverity) return false;
     if (selectedType !== 'ALL' && a.root_cause !== selectedType) return false;

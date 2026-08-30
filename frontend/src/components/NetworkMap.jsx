@@ -80,13 +80,15 @@ function ClusteredMarkers({ stations, activeAlerts, onMarkerClick, getNodeColor 
   // Persistently update existing markers without tearing down DOM elements
   useEffect(() => {
     const clusterGroup = clusterGroupRef.current;
-    if (!clusterGroup || !stations || stations.length === 0) return;
+    const safeStations = Array.isArray(stations) ? stations : [];
+    if (!clusterGroup || safeStations.length === 0) return;
 
     const markersMap = markersMapRef.current;
 
-    stations.forEach(s => {
+    safeStations.forEach(s => {
+      if (!s || s.lat === undefined || s.lon === undefined) return;
       const color = getNodeColor(s.station_id);
-      const stationAlerts = (activeAlerts || []).filter(a => a.station_id === s.station_id);
+      const stationAlerts = (Array.isArray(activeAlerts) ? activeAlerts : []).filter(a => a && a.station_id === s.station_id);
       const hasAnomaly = stationAlerts.length > 0;
       
       let statusStr = 'healthy';
@@ -138,11 +140,13 @@ export default function NetworkMap({ stations = [], alerts = [], onSelectStation
   const [selectedStationId, setSelectedStationId] = useState(null);
   const [cityAverages, setCityAverages] = useState(null);
 
-  const activeAlerts = (alerts || []).filter(a => a.status === 'active' || !a.status);
+  const safeStations = Array.isArray(stations) ? stations : [];
+  const safeAlerts = Array.isArray(alerts) ? alerts : [];
+  const activeAlerts = safeAlerts.filter(a => a && (a.status === 'active' || !a.status));
 
   // Single Shared Source of Truth Node Color Logic strictly based on fault rate thresholds
   const getNodeColor = (stationId) => {
-    const stationObj = (stations || []).find(st => st.station_id === stationId);
+    const stationObj = safeStations.find(st => st && st.station_id === stationId);
     const health = stationObj?.health || {};
     const rate = Number(health.rolling_anomaly_rate !== undefined ? health.rolling_anomaly_rate : 0);
 

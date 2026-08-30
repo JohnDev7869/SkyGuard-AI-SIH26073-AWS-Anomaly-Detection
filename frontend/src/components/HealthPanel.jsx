@@ -5,10 +5,12 @@ const HEALTHY_MAX = 0.10;
 const WARNING_MAX = 0.25;
 
 export default function HealthPanel({ stations = [], alerts = [], onSelect }) {
-  const activeAlerts = (alerts || []).filter(a => a.status === 'active' || !a.status);
+  const safeAlerts = Array.isArray(alerts) ? alerts : [];
+  const safeStations = Array.isArray(stations) ? stations : [];
+  const activeAlerts = safeAlerts.filter(a => a && (a.status === 'active' || !a.status));
   
   // Filter valid station objects and sort strictly by rolling fault rate descending
-  const validStations = (stations || []).filter(s => s && s.station_id && s.name);
+  const validStations = safeStations.filter(s => s && s.station_id && s.name);
   const sortedStations = [...validStations].sort((a, b) => {
     const aRate = Number(a.health?.rolling_anomaly_rate || 0);
     const bRate = Number(b.health?.rolling_anomaly_rate || 0);

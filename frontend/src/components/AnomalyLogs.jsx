@@ -1,27 +1,31 @@
 import React, { useState, useMemo } from 'react';
 import { ScanSearch, Search, Eye, X, Sparkles, Radio, Activity, Filter } from 'lucide-react';
 
-export default function AnomalyLogs({ alerts = [], stations = [] }) {
+export default function AnomalyLogs({ alerts: propAlerts = [], stations: propStations = [] }) {
+  const alerts = Array.isArray(propAlerts) ? propAlerts : [];
+  const stations = Array.isArray(propStations) ? propStations : [];
   const [selectedCity, setSelectedCity] = useState('');
   const [selectedProblem, setSelectedProblem] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [showAll, setShowAll] = useState(false);
 
-  const getStationName = (id) => (stations || []).find(s => s.station_id === id)?.name || id;
+  const getStationName = (id) => (stations || []).find(s => s && s.station_id === id)?.name || id;
 
   const stationCounts = useMemo(() => {
     const map = {};
-    (stations || []).forEach(s => { map[s.station_id] = 0; });
+    (stations || []).forEach(s => { if (s && s.station_id) map[s.station_id] = 0; });
     (alerts || []).forEach(a => {
-      if (map[a.station_id] !== undefined) map[a.station_id]++;
-      else map[a.station_id] = 1;
+      if (a && a.station_id) {
+        if (map[a.station_id] !== undefined) map[a.station_id]++;
+        else map[a.station_id] = 1;
+      }
     });
     return map;
   }, [alerts, stations]);
 
   const problems = useMemo(() => {
     const set = new Set();
-    (alerts || []).forEach(a => { if (a.root_cause) set.add(a.root_cause); });
+    (alerts || []).forEach(a => { if (a && a.root_cause) set.add(a.root_cause); });
     return Array.from(set);
   }, [alerts]);
 

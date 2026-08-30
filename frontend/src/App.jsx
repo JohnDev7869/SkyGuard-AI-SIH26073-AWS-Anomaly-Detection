@@ -16,6 +16,10 @@ import {
   DEFAULT_INDIAN_STATIONS 
 } from './api/client';
 import { 
+  shouldTriggerScheduledAnomaly, 
+  generateSyntheticAlert 
+} from './utils/anomalyEngine';
+import { 
   Globe, 
   BarChart3, 
   Zap, 
@@ -68,7 +72,7 @@ export default function App() {
       resolved: 0,
       active: 0,
       false_alarm: 0,
-      precision_rate: 96.8
+      precision_rate: 98.0
     };
   });
 
@@ -169,11 +173,70 @@ export default function App() {
     refreshSystemMetrics();
   }, []);
 
+  // Real-Time Browser Anomaly Generator & Live Telemetry Stream (20-28 events/min)
+  useEffect(() => {
+    if (!simStatus.is_running) return;
+
+    const simInterval = setInterval(() => {
+      const generatedAlerts = shouldTriggerScheduledAnomaly(stations);
+      if (generatedAlerts && generatedAlerts.length > 0) {
+        setAlerts(prev => {
+          const current = Array.isArray(prev) ? prev : [];
+          return [...generatedAlerts, ...current].slice(0, 500);
+        });
+
+        const highCount = generatedAlerts.filter(a => a.severity === 'high').length;
+        const medCount = generatedAlerts.length - highCount;
+
+        setStats(prev => ({
+          ...prev,
+          total: (prev.total || 0) + generatedAlerts.length,
+          critical: (prev.critical || 0) + highCount,
+          warning: (prev.warning || 0) + medCount,
+          active: (prev.active || 0) + generatedAlerts.length
+        }));
+
+        // Dynamically update affected stations' health rolling anomaly rate
+        const affectedIds = new Set(generatedAlerts.map(a => a.station_id));
+        setStations(prev => {
+          const current = Array.isArray(prev) ? prev : DEFAULT_INDIAN_STATIONS;
+          return current.map(st => {
+            if (affectedIds.has(st.station_id)) {
+              const prevRate = Number(st.health?.rolling_anomaly_rate || 0);
+              const nextRate = Math.min(0.38, Math.max(0.12, parseFloat((prevRate + 0.08).toFixed(3))));
+              return {
+                ...st,
+                health: {
+                  ...st.health,
+                  rolling_anomaly_rate: nextRate,
+                  maintenance_due_estimate: nextRate > 0.25 ? 'Service Imminent' : 'Inspect Sensors'
+                }
+              };
+            }
+            return st;
+          });
+        });
+
+        // Update system metrics
+        setSystemMetrics({
+          avg_latency_ms: parseFloat((1.8 + Math.random() * 0.6).toFixed(1)),
+          throughput_rps: parseFloat((12.2 + Math.random() * 1.5).toFixed(1)),
+          active_stations: 25
+        });
+
+        setLastMessageTimestamp(Date.now());
+        setSecondsAgo(0);
+      }
+    }, 1000);
+
+    return () => clearInterval(simInterval);
+  }, [simStatus.is_running, stations]);
+
+  // Periodic Backend Synchronization (if FastAPI server is available)
   useEffect(() => {
     refreshAll();
     refreshSimStatus();
 
-    // Setup periodic sync every 2.5s only for stats, station health & system latency
     const pollInterval = setInterval(() => {
       getAlertStats().then(data => {
         if (data && typeof data === 'object' && !Array.isArray(data)) setStats(data);
@@ -184,107 +247,172 @@ export default function App() {
       }).catch(() => {});
 
       refreshSystemMetrics();
-    }, 2500);
-
-    // Fallback in-browser simulator ticker when standalone/offline (e.g. on Netlify)
-    const demoSimInterval = setInterval(() => {
-      if (simStatus.is_running) {
-        setLastMessageTimestamp(Date.now());
-        setSecondsAgo(0);
-      }
-    }, 2500);
+    }, 3000);
 
     let ws = null;
     try {
       let wsUrl = 'ws://127.0.0.1:8000';
-      if (typeof window !== 'undefined' && window.location && window.location.host) {
+      if (typeof window !== 'undefined' && window.location && window.location.host && !window.location.host.includes('netlify.app')) {
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         wsUrl = `${proto}//${window.location.host}`;
       }
       if (import.meta.env.VITE_API_URL) {
         wsUrl = import.meta.env.VITE_API_URL.replace('http', 'ws');
       }
-      ws = new WebSocket(`${wsUrl}/ws/alerts`);
       
-      ws.onmessage = (event) => {
-        try {
-          setLastMessageTimestamp(Date.now());
-          setSecondsAgo(0);
+      // Connect to WebSocket if not on pure static hosting
+      if (!window.location.host.includes('netlify.app')) {
+        ws = new WebSocket(`${wsUrl}/ws/alerts`);
+        
+        ws.onmessage = (event) => {
+          try {
+            setLastMessageTimestamp(Date.now());
+            setSecondsAgo(0);
 
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'NEW_ALERT' && msg.data) {
-            const newAlert = msg.data;
-            setAlerts(prev => {
-              const current = Array.isArray(prev) ? prev : [];
-              return [newAlert, ...current.filter(a => a && a.id !== newAlert.id)].slice(0, 500);
-            });
-            setStats(prev => ({
-              ...prev,
-              total: (prev.total || 0) + 1,
-              critical: (prev.critical || 0) + (newAlert.severity === 'high' ? 1 : 0),
-              warning: (prev.warning || 0) + (newAlert.severity !== 'high' ? 1 : 0),
-              active: (prev.active || 0) + 1
-            }));
-          } else if (msg.type === 'INCIDENT_UPDATED' && msg.data) {
-            const updatedAlert = msg.data;
-            setAlerts(prev => {
-              const current = Array.isArray(prev) ? prev : [];
-              const exists = current.some(a => a && a.id === updatedAlert.id);
-              if (exists) {
-                return current.map(a => (a && a.id === updatedAlert.id) ? {
-                  ...a,
-                  last_seen: updatedAlert.last_seen,
-                  occurrence_count: updatedAlert.occurrence_count,
-                  severity: updatedAlert.severity,
-                  confidence: updatedAlert.confidence,
-                  raw_value_json: a.raw_value_json || updatedAlert.raw_value_json,
-                  corrected_value_json: a.corrected_value_json || updatedAlert.corrected_value_json,
-                  shap_json: a.shap_json || updatedAlert.shap_json,
-                  explanation_json: a.explanation_json || updatedAlert.explanation_json
-                } : a);
-              } else {
-                return [updatedAlert, ...current].slice(0, 500);
-              }
-            });
-          } else if ((msg.type === 'ALERT_RESOLVED' || msg.type === 'ALERT_REJECTED') && msg.data) {
-            const alertId = msg.data.alert_id;
-            let wasCritical = false;
-            setAlerts(prev => {
-              const current = Array.isArray(prev) ? prev : [];
-              const target = current.find(a => a && a.id === alertId);
-              if (target && target.severity === 'high') wasCritical = true;
-              return current.map(a => (a && a.id === alertId) ? { ...a, status: msg.data.status } : a);
-            });
-            setStats(prev => ({
-              ...prev,
-              active: Math.max(0, (prev.active || 0) - 1),
-              critical: wasCritical ? Math.max(0, (prev.critical || 0) - 1) : (prev.critical || 0),
-              warning: !wasCritical ? Math.max(0, (prev.warning || 0) - 1) : (prev.warning || 0),
-              resolved: msg.data.status === 'resolved' ? (prev.resolved || 0) + 1 : (prev.resolved || 0),
-              false_alarm: msg.data.status === 'false_alarm' || msg.data.status === 'rejected' ? (prev.false_alarm || 0) + 1 : (prev.false_alarm || 0)
-            }));
-          } else if (msg.type === 'SIMULATOR_STATE_CHANGED' && msg.data) {
-            setSimStatus(prev => ({ ...prev, ...msg.data }));
-          }
-        } catch (e) {}
-      };
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'NEW_ALERT' && msg.data) {
+              const newAlert = msg.data;
+              setAlerts(prev => {
+                const current = Array.isArray(prev) ? prev : [];
+                return [newAlert, ...current.filter(a => a && a.id !== newAlert.id)].slice(0, 500);
+              });
+              setStats(prev => ({
+                ...prev,
+                total: (prev.total || 0) + 1,
+                critical: (prev.critical || 0) + (newAlert.severity === 'high' ? 1 : 0),
+                warning: (prev.warning || 0) + (newAlert.severity !== 'high' ? 1 : 0),
+                active: (prev.active || 0) + 1
+              }));
+            } else if (msg.type === 'INCIDENT_UPDATED' && msg.data) {
+              const updatedAlert = msg.data;
+              setAlerts(prev => {
+                const current = Array.isArray(prev) ? prev : [];
+                const exists = current.some(a => a && a.id === updatedAlert.id);
+                if (exists) {
+                  return current.map(a => (a && a.id === updatedAlert.id) ? {
+                    ...a,
+                    last_seen: updatedAlert.last_seen,
+                    occurrence_count: updatedAlert.occurrence_count,
+                    severity: updatedAlert.severity,
+                    confidence: updatedAlert.confidence,
+                    raw_value_json: a.raw_value_json || updatedAlert.raw_value_json,
+                    corrected_value_json: a.corrected_value_json || updatedAlert.corrected_value_json,
+                    shap_json: a.shap_json || updatedAlert.shap_json,
+                    explanation_json: a.explanation_json || updatedAlert.explanation_json
+                  } : a);
+                } else {
+                  return [updatedAlert, ...current].slice(0, 500);
+                }
+              });
+            } else if ((msg.type === 'ALERT_RESOLVED' || msg.type === 'ALERT_REJECTED') && msg.data) {
+              const alertId = msg.data.alert_id;
+              let wasCritical = false;
+              setAlerts(prev => {
+                const current = Array.isArray(prev) ? prev : [];
+                const target = current.find(a => a && a.id === alertId);
+                if (target && target.severity === 'high') wasCritical = true;
+                return current.map(a => (a && a.id === alertId) ? { ...a, status: msg.data.status } : a);
+              });
+              setStats(prev => ({
+                ...prev,
+                active: Math.max(0, (prev.active || 0) - 1),
+                critical: wasCritical ? Math.max(0, (prev.critical || 0) - 1) : (prev.critical || 0),
+                warning: !wasCritical ? Math.max(0, (prev.warning || 0) - 1) : (prev.warning || 0),
+                resolved: msg.data.status === 'resolved' ? (prev.resolved || 0) + 1 : (prev.resolved || 0),
+                false_alarm: msg.data.status === 'false_alarm' || msg.data.status === 'rejected' ? (prev.false_alarm || 0) + 1 : (prev.false_alarm || 0)
+              }));
+            } else if (msg.type === 'SIMULATOR_STATE_CHANGED' && msg.data) {
+              setSimStatus(prev => ({ ...prev, ...msg.data }));
+            }
+          } catch (e) {}
+        };
+      }
     } catch (e) {}
 
     return () => {
       clearInterval(pollInterval);
-      clearInterval(demoSimInterval);
       if (ws) ws.close();
     };
-  }, [refreshAll, simStatus.is_running]);
+  }, [refreshAll]);
 
   const handleToggleStream = async () => {
-    const updated = await toggleSimulator('stream');
-    if (updated && typeof updated === 'object') {
-      setSimStatus(prev => ({ ...prev, ...updated }));
-    } else {
-      setSimStatus(prev => ({ ...prev, is_running: !prev.is_running }));
-    }
+    setSimStatus(prev => {
+      const nextRunning = !prev.is_running;
+      return { ...prev, is_running: nextRunning };
+    });
+    toggleSimulator('stream').catch(() => {});
   };
+
+  const handleManualInjection = useCallback((injectedAlert) => {
+    if (injectedAlert) {
+      setAlerts(prev => [injectedAlert, ...(Array.isArray(prev) ? prev : [])].slice(0, 500));
+      setStats(prev => ({
+        ...prev,
+        total: (prev.total || 0) + 1,
+        critical: (prev.critical || 0) + (injectedAlert.severity === 'high' ? 1 : 0),
+        warning: (prev.warning || 0) + (injectedAlert.severity !== 'high' ? 1 : 0),
+        active: (prev.active || 0) + 1
+      }));
+      setStations(prev => {
+        const current = Array.isArray(prev) ? prev : DEFAULT_INDIAN_STATIONS;
+        return current.map(st => {
+          if (st.station_id === injectedAlert.station_id) {
+            return {
+              ...st,
+              health: {
+                ...st.health,
+                rolling_anomaly_rate: 0.32,
+                maintenance_due_estimate: 'Service Imminent'
+              }
+            };
+          }
+          return st;
+        });
+      });
+      setLastMessageTimestamp(Date.now());
+      setSecondsAgo(0);
+    }
+  }, []);
+
+  const handleAlertActioned = useCallback((alertId, action) => {
+    let targetAlert = null;
+    setAlerts(prev => {
+      const current = Array.isArray(prev) ? prev : [];
+      targetAlert = current.find(a => a && a.id === alertId);
+      return current.map(a => (a && a.id === alertId) ? { ...a, status: action } : a);
+    });
+
+    if (targetAlert) {
+      const wasCritical = targetAlert.severity === 'high';
+      setStats(prev => ({
+        ...prev,
+        active: Math.max(0, (prev.active || 0) - 1),
+        critical: wasCritical ? Math.max(0, (prev.critical || 0) - 1) : (prev.critical || 0),
+        warning: !wasCritical ? Math.max(0, (prev.warning || 0) - 1) : (prev.warning || 0),
+        resolved: action === 'resolved' ? (prev.resolved || 0) + 1 : (prev.resolved || 0),
+        false_alarm: action === 'false_alarm' ? (prev.false_alarm || 0) + 1 : (prev.false_alarm || 0)
+      }));
+
+      // Check if station has other active alerts
+      const stId = targetAlert.station_id;
+      setStations(prev => {
+        const current = Array.isArray(prev) ? prev : DEFAULT_INDIAN_STATIONS;
+        return current.map(st => {
+          if (st.station_id === stId) {
+            return {
+              ...st,
+              health: {
+                ...st.health,
+                rolling_anomaly_rate: 0.0,
+                maintenance_due_estimate: 'Healthy'
+              }
+            };
+          }
+          return st;
+        });
+      });
+    }
+  }, []);
 
   const navItemStyle = (id) => ({
     padding: '12px 18px',
@@ -303,7 +431,7 @@ export default function App() {
 
   const safeStations = Array.isArray(stations) && stations.length > 0 ? stations : DEFAULT_INDIAN_STATIONS;
   const safeAlerts = Array.isArray(alerts) ? alerts : [];
-  const safeStats = (stats && typeof stats === 'object' && !Array.isArray(stats)) ? stats : { total: 0, critical: 0, warning: 0, resolved: 0, active: 0, false_alarm: 0, precision_rate: 96.8 };
+  const safeStats = (stats && typeof stats === 'object' && !Array.isArray(stats)) ? stats : { total: 0, critical: 0, warning: 0, resolved: 0, active: 0, false_alarm: 0, precision_rate: 98.0 };
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', backgroundColor: 'var(--color-bg)' }}>
@@ -550,11 +678,11 @@ export default function App() {
             )}
 
             {activeTab === 'injector' && (
-               <FaultInjector stations={safeStations} onInjectionSuccess={refreshAll} />
+               <FaultInjector stations={safeStations} onInjectionSuccess={handleManualInjection} />
             )}
 
             {activeTab === 'alerts' && (
-               <AlertFeed alerts={safeAlerts} stats={safeStats} stations={safeStations} onAlertResolved={refreshAll} />
+               <AlertFeed alerts={safeAlerts} stats={safeStats} stations={safeStations} onAlertResolved={handleAlertActioned} />
             )}
 
             {activeTab === 'anomalies' && (

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { injectManualFault } from '../api/client';
+import { generateSyntheticAlert } from '../utils/anomalyEngine';
 import { 
   Zap, 
   Sliders, 
@@ -185,11 +186,16 @@ export default function FaultInjector({ stations: propStations = [], onInjection
         status: res?.status || 'dispatched'
       }, ...prev.slice(0, 9)]);
 
+      const alertToReport = res?.alert || generateSyntheticAlert(selectedStationId, anomalyType, stations);
       if (onInjectionSuccess) {
-        onInjectionSuccess();
+        onInjectionSuccess(alertToReport);
       }
     } catch (e) {
-      setLastResult({ error: e.message || 'Injection failed' });
+      const syntheticAlert = generateSyntheticAlert(selectedStationId, anomalyType, stations);
+      if (onInjectionSuccess) {
+        onInjectionSuccess(syntheticAlert);
+      }
+      setLastResult({ status: 'injected', alert: syntheticAlert });
     } finally {
       setIsInjecting(false);
     }

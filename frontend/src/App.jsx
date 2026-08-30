@@ -82,7 +82,7 @@ export default function App() {
     active_stations: 25
   });
 
-  const [selectedStation, setSelectedStation] = useState(null);
+  const [selectedStation, setSelectedStation] = useState('AWS_MUM');
   const [activeTab, setActiveTab] = useState('map'); 
   
   // Persist theme to localStorage
@@ -192,22 +192,36 @@ export default function App() {
           active: (prev.active || 0) + generatedAlerts.length
         }));
 
-        // Dynamically update affected stations' health rolling anomaly rate
+        // Dynamically update affected stations' health rolling anomaly rate with realistic calibration
         const affectedIds = new Set(generatedAlerts.map(a => a.station_id));
         setStations(prev => {
           const current = Array.isArray(prev) ? prev : DEFAULT_INDIAN_STATIONS;
           return current.map(st => {
             if (affectedIds.has(st.station_id)) {
-              const prevRate = Number(st.health?.rolling_anomaly_rate || 0);
-              const nextRate = Math.min(0.38, Math.max(0.12, parseFloat((prevRate + 0.08).toFixed(3))));
+              const currentRate = Number(st.health?.rolling_anomaly_rate || 0);
+              const nextRate = currentRate < 0.08 ? 0.08 : (currentRate < 0.14 ? 0.145 : Math.min(0.28, currentRate + 0.04));
               return {
                 ...st,
                 health: {
                   ...st.health,
                   rolling_anomaly_rate: nextRate,
-                  maintenance_due_estimate: nextRate > 0.25 ? 'Service Imminent' : 'Inspect Sensors'
+                  maintenance_due_estimate: nextRate > 0.25 ? 'Service Imminent' : (nextRate >= 0.10 ? 'Inspect Sensors' : 'Healthy')
                 }
               };
+            } else {
+              // Gentle natural cooling/decay towards 0.0% for stations with no new faults
+              const currentRate = Number(st.health?.rolling_anomaly_rate || 0);
+              if (currentRate > 0.02) {
+                const decayedRate = Math.max(0.0, parseFloat((currentRate - 0.015).toFixed(3)));
+                return {
+                  ...st,
+                  health: {
+                    ...st.health,
+                    rolling_anomaly_rate: decayedRate,
+                    maintenance_due_estimate: decayedRate > 0.25 ? 'Service Imminent' : (decayedRate >= 0.10 ? 'Inspect Sensors' : 'Healthy')
+                  }
+                };
+              }
             }
             return st;
           });

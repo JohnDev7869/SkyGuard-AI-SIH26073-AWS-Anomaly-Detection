@@ -14,15 +14,16 @@ export default function HealthPanel({ stations = [], alerts = [], onSelect }) {
   
   const getStationFaultRate = (s) => {
     const stationAlerts = activeAlerts.filter(a => a && a.station_id === s.station_id);
-    const hasActive = stationAlerts.length > 0;
+    const count = stationAlerts.length;
     const h = s.health || {};
     if (h.rolling_anomaly_rate !== undefined && Number(h.rolling_anomaly_rate) > 0) {
       return Number(h.rolling_anomaly_rate);
     }
-    if (hasActive) {
-      return Math.min(0.38, 0.12 + (stationAlerts.length - 1) * 0.06);
-    }
-    return 0.0;
+    if (count === 0) return 0.0;
+    if (count === 1) return 0.08;
+    if (count === 2) return 0.145;
+    if (count === 3) return 0.190;
+    return Math.min(0.28, 0.20 + count * 0.02);
   };
 
   const sortedStations = [...validStations].sort((a, b) => {

@@ -1,8 +1,6 @@
 import React from 'react';
-import { Activity, AlertTriangle, ShieldCheck, Wrench } from 'lucide-react';
-
-const HEALTHY_MAX = 0.10;
-const WARNING_MAX = 0.25;
+import { Activity, AlertTriangle } from 'lucide-react';
+import { getStationHealthMetrics } from '../utils/healthCalculator';
 
 export default function HealthPanel({ stations = [], alerts = [], onSelect }) {
   const safeAlerts = Array.isArray(alerts) ? alerts : [];
@@ -11,25 +9,11 @@ export default function HealthPanel({ stations = [], alerts = [], onSelect }) {
   
   // Filter valid station objects and sort strictly by rolling fault rate descending
   const validStations = safeStations.filter(s => s && s.station_id && s.name);
-  
-  const getStationFaultRate = (s) => {
-    const stationAlerts = activeAlerts.filter(a => a && a.station_id === s.station_id);
-    const count = stationAlerts.length;
-    const h = s.health || {};
-    if (h.rolling_anomaly_rate !== undefined && Number(h.rolling_anomaly_rate) > 0) {
-      return Number(h.rolling_anomaly_rate);
-    }
-    if (count === 0) return 0.0;
-    if (count === 1) return 0.08;
-    if (count === 2) return 0.145;
-    if (count === 3) return 0.190;
-    return Math.min(0.28, 0.20 + count * 0.02);
-  };
 
   const sortedStations = [...validStations].sort((a, b) => {
-    const aRate = getStationFaultRate(a);
-    const bRate = getStationFaultRate(b);
-    return bRate - aRate;
+    const aMetrics = getStationHealthMetrics(a.station_id, activeAlerts);
+    const bMetrics = getStationHealthMetrics(b.station_id, activeAlerts);
+    return bMetrics.faultRate - aMetrics.faultRate;
   });
 
   const totalActive = activeAlerts.length;
@@ -85,30 +69,9 @@ export default function HealthPanel({ stations = [], alerts = [], onSelect }) {
           </thead>
           <tbody>
             {sortedStations.map(s => {
-              const stationAlerts = activeAlerts.filter(a => a && a.station_id === s.station_id);
-              const hasActive = stationAlerts.length > 0;
-              
-              const rate = getStationFaultRate(s);
-              
-              // Priority 0: Status badge is a 100% PURE function of rolling fault rate
-              let label = 'Healthy';
-              let color = 'var(--color-status-healthy)';
-              let bg = 'rgba(61, 220, 132, 0.12)';
-              let border = 'rgba(61, 220, 132, 0.3)';
-              
-              if (rate > WARNING_MAX) {
-                label = 'Critical';
-                color = 'var(--color-status-critical)';
-                bg = 'rgba(255, 92, 92, 0.15)';
-                border = 'rgba(255, 92, 92, 0.4)';
-              } else if (rate >= HEALTHY_MAX) {
-                label = 'Warning';
-                color = 'var(--color-status-warning)';
-                bg = 'rgba(245, 166, 35, 0.15)';
-                border = 'rgba(245, 166, 35, 0.4)';
-              }
-              
-              const isHighlighted = rate > WARNING_MAX;
+              const metrics = getStationHealthMetrics(s.station_id, activeAlerts);
+              const isHighlighted = metrics.status === 'Critical';
+              const hasActive = metrics.activeCount > 0;
 
               return (
                 <tr key={s.station_id} 
@@ -141,18 +104,18 @@ export default function HealthPanel({ stations = [], alerts = [], onSelect }) {
                       {s.station_id}
                     </div>
                   </td>
-                  <td className="font-mono tabular-nums" style={{ padding: '8px 4px', color: color, fontWeight: 600 }}>
-                    {(rate * 100).toFixed(1)}%
+                  <td className="font-mono tabular-nums" style={{ padding: '8px 4px', color: metrics.color, fontWeight: 600 }}>
+                    {metrics.faultRatePercent}%
                   </td>
                   <td style={{ padding: '8px 4px' }}>
                     <span style={{ 
                       display: 'inline-flex', alignItems: 'center', gap: '4px',
                       padding: '2px 8px', borderRadius: '4px', 
-                      background: bg, border: `1px solid ${border}`, color: color,
+                      background: metrics.bg, border: `1px solid ${metrics.border}`, color: metrics.color,
                       fontSize: '0.78em', fontWeight: 600
                     }}>
-                      {label === 'Critical' ? <AlertTriangle size={11} strokeWidth={2} /> : null}
-                      <span>{label}</span>
+                      {metrics.status === 'Critical' ? <AlertTriangle size={11} strokeWidth={2} /> : null}
+                      <span>{metrics.status}</span>
                     </span>
                   </td>
                 </tr>

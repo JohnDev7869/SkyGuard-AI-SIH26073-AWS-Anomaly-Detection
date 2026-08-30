@@ -85,15 +85,13 @@ function ClusteredMarkers({ stations, activeAlerts, onMarkerClick, getNodeColor 
 
     const markersMap = markersMapRef.current;
 
-    safeStations.forEach(s => {
-      if (!s || s.lat === undefined || s.lon === undefined) return;
-      const color = getNodeColor(s.station_id);
-      const stationAlerts = (Array.isArray(activeAlerts) ? activeAlerts : []).filter(a => a && a.station_id === s.station_id);
-      const hasAnomaly = stationAlerts.length > 0;
-      
-      let statusStr = 'healthy';
-      if (color.includes('critical')) statusStr = 'critical';
-      else if (color.includes('warning')) statusStr = 'warning';
+    (stations || []).forEach(s => {
+      if (!s || !s.lat || !s.lon) return;
+
+      const healthMetrics = getStationHealthMetrics(s.station_id, activeAlerts);
+      const color = healthMetrics.color;
+      const hasAnomaly = healthMetrics.activeCount > 0;
+      const statusStr = healthMetrics.status.toLowerCase();
 
       const markerHtml = `
         <div style="position: relative; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer;">
@@ -130,12 +128,12 @@ function ClusteredMarkers({ stations, activeAlerts, onMarkerClick, getNodeColor 
         markersMap.set(s.station_id, marker);
       }
     });
-  }, [stations, activeAlerts, getNodeColor]);
+  }, [stations, activeAlerts]);
 
   return null;
 }
 
-export default function NetworkMap({ stations = [], alerts = [], onSelectStation, theme = 'dark', isPaused = false, onStartStream }) {
+export default function NetworkMap({ stations = [], alerts = [], onSelectStation, theme = 'dark' }) {
   const [selectedStationCoords, setSelectedStationCoords] = useState(null);
   const [selectedStationId, setSelectedStationId] = useState(null);
   const [cityAverages, setCityAverages] = useState(null);
@@ -146,22 +144,7 @@ export default function NetworkMap({ stations = [], alerts = [], onSelectStation
 
   // Single Shared Source of Truth Node Color Logic strictly based on fault rate thresholds
   const getNodeColor = (stationId) => {
-    const stationObj = safeStations.find(st => st && st.station_id === stationId);
-    const stationAlerts = activeAlerts.filter(a => a && a.station_id === stationId);
-    const health = stationObj?.health || {};
-    const rate = Number(health.rolling_anomaly_rate !== undefined && health.rolling_anomaly_rate > 0 
-      ? health.rolling_anomaly_rate 
-      : (stationAlerts.length > 0 ? Math.min(0.38, 0.12 + (stationAlerts.length - 1) * 0.06) : 0.0)
-    );
-
-    // Strictly matches the legend & health badge (<10% Healthy, 10-25% Warning, >25% Critical)
-    if (rate > WARNING_MAX) {
-      return 'var(--color-status-critical)';
-    }
-    if (rate >= HEALTHY_MAX) {
-      return 'var(--color-status-warning)';
-    }
-    return 'var(--color-status-healthy)';
+    return getStationHealthMetrics(stationId, activeAlerts).color;
   };
 
   const handleMarkerClick = async (s) => {
@@ -200,36 +183,16 @@ export default function NetworkMap({ stations = [], alerts = [], onSelectStation
   
   let popupHealthData = null;
   if (selectedStation) {
-    const health = selectedStation.health || {};
-    const rate = Number(health.rolling_anomaly_rate !== undefined ? health.rolling_anomaly_rate : 0);
-    const stationAlerts = activeAlerts.filter(a => a.station_id === selectedStation.station_id);
-    const anomalyCount = stationAlerts.length;
-
-    let healthStatus = 'Healthy';
-    let healthColor = 'var(--color-status-healthy)';
-    let healthBg = 'rgba(61, 220, 132, 0.12)';
-    let healthBorder = 'rgba(61, 220, 132, 0.3)';
-
-    if (rate > WARNING_MAX) {
-      healthStatus = 'Critical';
-      healthColor = 'var(--color-status-critical)';
-      healthBg = 'rgba(255, 92, 92, 0.15)';
-      healthBorder = 'rgba(255, 92, 92, 0.4)';
-    } else if (rate >= HEALTHY_MAX) {
-      healthStatus = 'Warning';
-      healthColor = 'var(--color-status-warning)';
-      healthBg = 'rgba(245, 166, 35, 0.15)';
-      healthBorder = 'rgba(245, 166, 35, 0.4)';
-    }
-
+    const healthMetrics = getStationHealthMetrics(selectedStation.station_id, activeAlerts);
     popupHealthData = {
       station: selectedStation,
-      faultRate: rate,
-      healthStatus,
-      healthColor,
-      healthBg,
-      healthBorder,
-      anomalyCount
+      faultRate: healthMetrics.faultRate,
+      faultRatePercent: healthMetrics.faultRatePercent,
+      healthStatus: healthMetrics.status,
+      healthColor: healthMetrics.color,
+      healthBg: healthMetrics.bg,
+      healthBorder: healthMetrics.border,
+      anomalyCount: healthMetrics.activeCount
     };
   }
 

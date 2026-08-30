@@ -1,30 +1,29 @@
 /* ==========================================================================
    SKYGUARD AI DESIGN TOKEN SYSTEM (tokens.css)
-   Single source of truth for both Dark and Light themes.
-   No component should hardcode a hex value — always reference var(--color-*).
+   Pure AMOLED Black Dark Theme & Crisp Clean Light Theme.
    ========================================================================== */
 
 :root,
 [data-theme="dark"] {
-  --color-bg: #0b0f14;
-  --color-surface: #121820;
-  --color-surface-hover: #1a222b;
-  --color-border: #232c37;
-  --color-text-primary: #e6eaef;
-  --color-text-secondary: #8b96a5;
+  --color-bg: #000000;              /* Pure 100% AMOLED pitch black */
+  --color-surface: #070a0e;         /* Deep AMOLED glass surface */
+  --color-surface-hover: #0f151c;   /* Subtle elevated interaction tier */
+  --color-border: #1a232d;          /* High-definition subtle contrast border */
+  --color-text-primary: #ffffff;    /* Pure crisp white typography */
+  --color-text-secondary: #94a3b8;  /* Refined muted secondary text */
 
-  --color-brand: #22d3ee;          /* logo, active nav, brand-only accents */
-  --color-status-healthy: #3ddc84;
-  --color-status-warning: #f5a623;
-  --color-status-critical: #ff5c5c;
-  --color-ai-accent: #8b5cf6;      /* SHAP / explainability / "AI reasoning" callouts only */
-  --color-action-primary: #2563eb; /* primary buttons — distinct from warning amber */
+  --color-brand: #00f0ff;          /* High-vibrancy Neon Cyan */
+  --color-status-healthy: #00e676; /* Vivid Neon Emerald */
+  --color-status-warning: #ffb300; /* Vivid Neon Amber */
+  --color-status-critical: #ff3366;/* Vivid Neon Crimson */
+  --color-ai-accent: #a855f7;      /* Vivid AI Purple */
+  --color-action-primary: #2563eb; /* Cobalt Action Blue */
 
-  --color-chart-grid: rgba(255, 255, 255, 0.08);
-  --color-chart-axis-label: #8b96a5;
-  --color-shadow: rgba(0, 0, 0, 0.6);
-  --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
-  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --color-chart-grid: rgba(255, 255, 255, 0.07);
+  --color-chart-axis-label: #94a3b8;
+  --color-shadow: rgba(0, 0, 0, 0.85);
+  --color-scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.35);
 
   --map-tile-provider: dark;
 
@@ -40,24 +39,24 @@
   --grid-line: var(--color-chart-grid);
   --shadow-color: var(--color-shadow);
   --accent-cyan: var(--color-brand);
-  --accent-cyan-glow: rgba(34, 211, 238, 0.25);
+  --accent-cyan-glow: rgba(0, 240, 255, 0.28);
   --accent-amber: var(--color-status-warning);
-  --accent-amber-glow: rgba(245, 166, 35, 0.25);
+  --accent-amber-glow: rgba(255, 179, 0, 0.28);
   --accent-red: var(--color-status-critical);
-  --accent-red-glow: rgba(255, 92, 92, 0.25);
+  --accent-red-glow: rgba(255, 51, 102, 0.28);
   --accent-green: var(--color-status-healthy);
-  --accent-green-glow: rgba(61, 220, 132, 0.25);
+  --accent-green-glow: rgba(0, 230, 118, 0.28);
 }
 
 [data-theme="light"] {
-  --color-bg: #f7f8fa;
+  --color-bg: #f8fafc;
   --color-surface: #ffffff;
-  --color-surface-hover: #f0f2f5;
-  --color-border: #e2e5ea;
-  --color-text-primary: #1a222b;
-  --color-text-secondary: #5b6675;
+  --color-surface-hover: #f1f5f9;
+  --color-border: #e2e8f0;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
 
-  --color-brand: #0e7490;
+  --color-brand: #0284c7;
   --color-status-healthy: #16a34a;
   --color-status-warning: #d97706;
   --color-status-critical: #dc2626;
@@ -65,7 +64,7 @@
   --color-action-primary: #2563eb;
 
   --color-chart-grid: rgba(0, 0, 0, 0.08);
-  --color-chart-axis-label: #5b6675;
+  --color-chart-axis-label: #64748b;
   --color-shadow: rgba(15, 23, 42, 0.06);
   --color-scrollbar-thumb: rgba(0, 0, 0, 0.2);
   --color-scrollbar-thumb-hover: rgba(0, 0, 0, 0.35);
@@ -84,7 +83,7 @@
   --grid-line: var(--color-chart-grid);
   --shadow-color: var(--color-shadow);
   --accent-cyan: var(--color-brand);
-  --accent-cyan-glow: rgba(14, 116, 144, 0.15);
+  --accent-cyan-glow: rgba(2, 132, 199, 0.15);
   --accent-amber: var(--color-status-warning);
   --accent-amber-glow: rgba(217, 119, 6, 0.15);
   --accent-red: var(--color-status-critical);

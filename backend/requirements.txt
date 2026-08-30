@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+paho-mqtt
+pandas
+numpy
+scikit-learn
+torch
+xgboost
+shap
+mapie
+scipy
+sqlalchemy
+websockets
+python-dotenv

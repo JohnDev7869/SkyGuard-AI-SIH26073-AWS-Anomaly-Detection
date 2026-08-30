@@ -5,9 +5,7 @@ import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import { Activity, X, MapPin, Radio, ShieldCheck, AlertTriangle, Pause, Play } from 'lucide-react';
-
-const HEALTHY_MAX = 0.10;
-const WARNING_MAX = 0.25;
+import { getStationHealthMetrics, HEALTHY_MAX, WARNING_MAX } from '../utils/healthCalculator';
 
 function MapAutoCenter({ coords }) {
   const map = useMap();

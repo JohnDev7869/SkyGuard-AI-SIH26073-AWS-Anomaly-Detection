@@ -437,25 +437,34 @@ export default function App() {
         {/* Navigation Menu */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: '10px' }}>
           <div style={navItemStyle('map')} onClick={() => setActiveTab('map')}>
-            <Globe size={18} strokeWidth={1.75} /> Geo Station Map
+            <Globe size={18} strokeWidth={1.75} /> <span>Geo Station Map</span>
           </div>
           <div style={navItemStyle('graphs')} onClick={() => setActiveTab('graphs')}>
-            <BarChart3 size={18} strokeWidth={1.75} /> Time-Series Inspector
+            <Activity size={18} strokeWidth={1.75} /> <span>Time-Series Inspector</span>
           </div>
-          <div style={navItemStyle('alerts')} onClick={() => setActiveTab('alerts')}>
-            <AlertTriangle size={18} strokeWidth={1.75} />
-            <span>Alert Feed & Triage</span>
-            {safeAlerts.filter(a => a && (a.status === 'active' || !a.status)).length > 0 && (
-              <span style={{ marginLeft: 'auto', background: 'rgba(255, 51, 102, 0.2)', color: 'var(--color-status-critical)', padding: '1px 7px', borderRadius: '10px', fontSize: '0.78em', fontWeight: 600 }}>
-                {safeAlerts.filter(a => a && (a.status === 'active' || !a.status)).length}
+          <div style={{ ...navItemStyle('alerts'), display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} onClick={() => setActiveTab('alerts')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <AlertTriangle size={18} strokeWidth={1.75} /> <span>Alert Feed & Triage</span>
+            </div>
+            {stats.active > 0 && (
+              <span className="font-mono tabular-nums" style={{
+                background: 'rgba(239, 68, 68, 0.2)',
+                color: '#ef4444',
+                padding: '2px 7px',
+                borderRadius: '10px',
+                fontSize: '0.72em',
+                fontWeight: 700,
+                border: '1px solid rgba(239, 68, 68, 0.4)'
+              }}>
+                {stats.active}
               </span>
             )}
           </div>
           <div style={navItemStyle('injector')} onClick={() => setActiveTab('injector')}>
-            <Zap size={18} strokeWidth={1.75} /> Fault Injection Studio
+            <Zap size={18} strokeWidth={1.75} /> <span>Fault Injection Studio</span>
           </div>
           <div style={navItemStyle('anomalies')} onClick={() => setActiveTab('anomalies')}>
-            <ScanSearch size={18} strokeWidth={1.75} /> AI Model Health & XAI
+            <ScanSearch size={18} strokeWidth={1.75} /> <span>AI Model Health & XAI</span>
           </div>
         </div>
 
@@ -616,12 +625,12 @@ export default function App() {
             {activeTab === 'graphs' && (
               <StationDetail 
                 stationId={selectedStation} 
-                onSelectStation={setSelectedStation}
+                onSelectStation={(stId) => setSelectedStation(stId)}
                 stations={safeStations}
                 alerts={safeAlerts} 
                 stats={safeStats}
                 theme={theme} 
-                onToggleTheme={setTheme}
+                onToggleTheme={(t) => setTheme(t)}
                 isPaused={!simStatus.is_running}
                 onToggleStream={handleToggleStream}
               />

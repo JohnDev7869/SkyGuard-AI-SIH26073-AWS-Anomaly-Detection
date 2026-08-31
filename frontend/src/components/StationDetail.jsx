@@ -586,46 +586,45 @@ export default function StationDetail({
 }
 
 // -------------------------------------------------------------
-// Helper Functions for Multi-Channel Diurnal Generation & Physics
+// Realistic 48-Step Diurnal Waveform Generator matching Screenshot 1
 // -------------------------------------------------------------
 function generateDiurnalData(station, channel, alerts = []) {
   const list = [];
   const now = Date.now();
-  const stepMs = 15 * 60 * 1000; // 15-minute intervals across 24 steps
+  const stepMs = 25 * 60 * 1000; // ~20-25 min intervals across 44 steps (~18-20 hours)
   const stationId = station.station_id || 'AWS_MUM';
   const seed = stationId.split('').reduce((acc, c, idx) => acc + c.charCodeAt(0) * (idx + 1), 0);
   
-  // Check if this station has active alerts
   const stationAlerts = alerts.filter(a => a && a.station_id === stationId && (a.status === 'active' || !a.status));
   const hasAlert = stationAlerts.length > 0;
-  const anomalyStep = hasAlert ? 22 : -1;
 
-  for (let i = 24; i >= 0; i--) {
+  for (let i = 44; i >= 0; i--) {
     const t = new Date(now - i * stepMs);
-    const stepIdx = (24 - i) % 48;
+    const stepIdx = (44 - i);
     const baseVal = getChannelBaseline(station, channel, stepIdx);
-    const noise = (Math.sin(i * 0.4 + seed) * 0.4) + ((Math.sin(i * 1.7 + seed) * 0.2));
+    const noise = (Math.sin(i * 0.75 + seed) * 0.35) + ((Math.cos(i * 2.1 + seed) * 0.2));
     
     let observed = baseVal + noise;
     let isAnom = false;
     let anomalyLabel = null;
 
+    // Display anomaly on the latest step on the far right if active
     if (i === 0 && hasAlert) {
       isAnom = true;
-      anomalyLabel = stationAlerts[0]?.root_cause ? stationAlerts[0].root_cause.replace(/_/g, ' ').toUpperCase() : 'TELEMETRY ANOMALY';
-      const offset = channel === 'pressure' ? 24 : channel === 'humidity' ? 28 : channel === 'wind' ? 12 : 7.8;
+      anomalyLabel = stationAlerts[0]?.root_cause ? stationAlerts[0].root_cause.replace(/_/g, ' ').toUpperCase() : 'TELEMETRY STEP OUTLIER';
+      const offset = channel === 'pressure' ? 24 : channel === 'humidity' ? 26 : channel === 'wind' ? 12 : 4.5;
       observed = baseVal + offset;
     }
 
     const sigma = getChannelSigma(channel);
-    const upperThreshold = parseFloat((baseVal + 2.5 * sigma).toFixed(2));
-    const lowerThreshold = parseFloat((baseVal - 2.5 * sigma).toFixed(2));
+    const upperThreshold = parseFloat((baseVal + 2.5 * sigma + (Math.sin(i * 0.4 + seed) * 0.25)).toFixed(1));
+    const lowerThreshold = parseFloat((baseVal - 2.5 * sigma - (Math.sin(i * 0.4 + seed) * 0.25)).toFixed(1));
 
     list.push({
       stepIdx,
       timestamp: t.toISOString(),
-      timeLabel: t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      observed: parseFloat(observed.toFixed(2)),
+      timeLabel: t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+      observed: parseFloat(observed.toFixed(1)),
       upperThreshold,
       lowerThreshold,
       isAnomaly: isAnom || observed > upperThreshold || observed < lowerThreshold,
@@ -641,25 +640,22 @@ function getChannelBaseline(station, channel, stepIdx) {
   const baseP = station.base_pressure !== undefined ? station.base_pressure : 1010.0;
   const baseH = station.base_humidity !== undefined ? station.base_humidity : 60.0;
 
-  // Diurnal sinusoidal wave progression across day (48 steps = 24 hours)
-  const diurnalAngle = ((stepIdx - 12) / 48) * 2 * Math.PI;
+  // Normalized progression from 18:00 (evening) down to minimum at ~03:00, then climbing up to 14:00 (afternoon peak)
+  const angle = (stepIdx / 44) * Math.PI * 1.7;
 
   switch (channel) {
     case 'temp':
-      // Low at night (step 12 = 06:00), Peak at afternoon (step 30 = 15:00)
-      return baseT - 6.5 * Math.cos(diurnalAngle);
+      // Drops from 31°C to ~22°C before dawn, then climbs smoothly to 35°C in the afternoon
+      return 28.5 - 6.5 * Math.cos(angle) + ((station.base_temp ? station.base_temp - 32.0 : 0) * 0.35);
     case 'humidity':
-      // Inverse of temperature (high humidity at night, low in afternoon)
-      return Math.min(95, Math.max(25, baseH + 15.0 * Math.cos(diurnalAngle)));
+      // Inverse of temperature
+      return Math.min(95, Math.max(25, 62.0 + 22.0 * Math.cos(angle)));
     case 'pressure':
-      // Semidiurnal atmospheric tide
-      return baseP + 2.5 * Math.sin(diurnalAngle * 2);
+      return baseP + 2.5 * Math.sin(angle * 2);
     case 'wind':
-      // Higher wind during afternoon heating
-      return Math.max(1.0, 4.5 + 3.0 * Math.sin(diurnalAngle));
+      return Math.max(1.0, 4.5 + 3.5 * Math.sin(angle));
     case 'solar':
-      // Daylight only between 06:00 and 18:00
-      const solarRad = Math.sin(diurnalAngle);
+      const solarRad = Math.sin(angle);
       return solarRad > 0 ? solarRad * 850 : 0;
     default:
       return baseT;
@@ -668,12 +664,12 @@ function getChannelBaseline(station, channel, stepIdx) {
 
 function getChannelNoise(channel) {
   switch (channel) {
-    case 'temp': return 0.5;
+    case 'temp': return 0.4;
     case 'humidity': return 1.2;
     case 'pressure': return 0.3;
     case 'wind': return 0.8;
     case 'solar': return 15.0;
-    default: return 0.5;
+    default: return 0.4;
   }
 }
 

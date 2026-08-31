@@ -437,19 +437,25 @@ export default function App() {
         {/* Navigation Menu */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: '10px' }}>
           <div style={navItemStyle('map')} onClick={() => setActiveTab('map')}>
-            <Globe size={18} strokeWidth={1.75} /> Satellite Map
+            <Globe size={18} strokeWidth={1.75} /> Geo Station Map
           </div>
           <div style={navItemStyle('graphs')} onClick={() => setActiveTab('graphs')}>
-            <BarChart3 size={18} strokeWidth={1.75} /> Data & Graphs
-          </div>
-          <div style={navItemStyle('injector')} onClick={() => setActiveTab('injector')}>
-            <Zap size={18} strokeWidth={1.75} /> Fault Injection Lab
+            <BarChart3 size={18} strokeWidth={1.75} /> Time-Series Inspector
           </div>
           <div style={navItemStyle('alerts')} onClick={() => setActiveTab('alerts')}>
-            <AlertTriangle size={18} strokeWidth={1.75} /> Action Center
+            <AlertTriangle size={18} strokeWidth={1.75} />
+            <span>Alert Feed & Triage</span>
+            {safeAlerts.filter(a => a && (a.status === 'active' || !a.status)).length > 0 && (
+              <span style={{ marginLeft: 'auto', background: 'rgba(255, 51, 102, 0.2)', color: 'var(--color-status-critical)', padding: '1px 7px', borderRadius: '10px', fontSize: '0.78em', fontWeight: 600 }}>
+                {safeAlerts.filter(a => a && (a.status === 'active' || !a.status)).length}
+              </span>
+            )}
+          </div>
+          <div style={navItemStyle('injector')} onClick={() => setActiveTab('injector')}>
+            <Zap size={18} strokeWidth={1.75} /> Fault Injection Studio
           </div>
           <div style={navItemStyle('anomalies')} onClick={() => setActiveTab('anomalies')}>
-            <ScanSearch size={18} strokeWidth={1.75} /> Anomaly Telemetry Logs
+            <ScanSearch size={18} strokeWidth={1.75} /> AI Model Health & XAI
           </div>
         </div>
 
@@ -608,45 +614,17 @@ export default function App() {
             )}
 
             {activeTab === 'graphs' && (
-              <div className="glass-panel" style={{ flex: 1, display: 'flex', padding: '20px', gap: '20px', overflow: 'hidden' }}>
-                <div style={{ width: '260px', borderRight: '1px solid var(--color-border)', paddingRight: '15px', overflowY: 'auto' }}>
-                  <h3 style={{ marginTop: 0, color: 'var(--color-text-primary)', fontSize: '0.95em', fontWeight: 600 }}>
-                    Indian AWS Stations
-                  </h3>
-                  {safeStations.map(s => (
-                    <div key={s.station_id} 
-                         onClick={() => setSelectedStation(s.station_id)}
-                         style={{
-                           padding: '9px 12px', margin: '4px 0', cursor: 'pointer', borderRadius: '6px',
-                           background: selectedStation === s.station_id ? 'var(--color-surface-hover)' : 'transparent',
-                           border: selectedStation === s.station_id ? '1px solid var(--color-brand)' : '1px solid transparent',
-                           color: 'var(--color-text-primary)',
-                           display: 'flex',
-                           justifyContent: 'space-between',
-                           alignItems: 'center',
-                           transition: 'all 0.15s ease'
-                         }}>
-                      <span style={{ fontSize: '0.9em', fontWeight: 500 }}>{s.name}</span>
-                      <span className="font-mono tabular-nums" style={{ fontSize: '0.78em', color: 'var(--color-text-secondary)' }}>{s.station_id}</span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto' }}>
-                  {selectedStation ? (
-                    <StationDetail 
-                      stationId={selectedStation} 
-                      alerts={safeAlerts.filter(a => a && a.station_id === selectedStation)} 
-                      theme={theme} 
-                      isPaused={!simStatus.is_running}
-                      onStartStream={handleToggleStream}
-                    />
-                  ) : (
-                    <div style={{ color: 'var(--color-text-secondary)', display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', fontStyle: 'italic', fontSize: '0.9em' }}>
-                      Select an AWS station from the left column to view real-time telemetry curves and AI corrections.
-                    </div>
-                  )}
-                </div>
-              </div>
+              <StationDetail 
+                stationId={selectedStation} 
+                onSelectStation={setSelectedStation}
+                stations={safeStations}
+                alerts={safeAlerts} 
+                stats={safeStats}
+                theme={theme} 
+                onToggleTheme={setTheme}
+                isPaused={!simStatus.is_running}
+                onToggleStream={handleToggleStream}
+              />
             )}
 
             {activeTab === 'injector' && (

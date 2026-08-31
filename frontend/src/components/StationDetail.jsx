@@ -1,411 +1,689 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { getReadings, DEFAULT_INDIAN_STATIONS } from '../api/client';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
-import { Sparkles, Clock, AlertTriangle, WifiOff } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer 
+} from 'recharts';
+import { 
+  Radio, 
+  AlertTriangle, 
+  Flame, 
+  Target, 
+  Clock, 
+  Moon, 
+  Sun, 
+  Play, 
+  Pause, 
+  FastForward,
+  X
+} from 'lucide-react';
+import { DEFAULT_INDIAN_STATIONS } from '../api/client';
 
-export default function StationDetail({ stationId, alerts = [], isPaused = false }) {
-  const [readings, setReadings] = useState([]);
-  const [showCorrected, setShowCorrected] = useState(true);
+export default function StationDetail({
+  stationId = 'AWS_MUM',
+  onSelectStation,
+  stations: propStations = DEFAULT_INDIAN_STATIONS,
+  alerts = [],
+  stats = {},
+  isPaused = false,
+  onToggleStream,
+  theme = 'dark',
+  onToggleTheme
+}) {
+  const stations = Array.isArray(propStations) && propStations.length > 0 ? propStations : DEFAULT_INDIAN_STATIONS;
+  const currentStation = stations.find(s => s && s.station_id === stationId) || stations[0] || DEFAULT_INDIAN_STATIONS[0];
+  
+  // Selected Sensor Channel (Air Temp, Relative Humidity, Pressure, Wind Speed, Solar Radiation)
+  const [selectedChannel, setSelectedChannel] = useState('temp');
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('1 New Anomaly detected across AWS stations!');
   const alertsRef = useRef(alerts);
-
-  const currentStation = DEFAULT_INDIAN_STATIONS.find(s => s.station_id === stationId) || DEFAULT_INDIAN_STATIONS[0];
-  const defaultBaseT = currentStation.base_temp !== undefined ? currentStation.base_temp : 32.0;
-  const defaultBaseP = currentStation.base_pressure !== undefined ? currentStation.base_pressure : 1010.0;
-  const defaultBaseH = currentStation.base_humidity !== undefined ? currentStation.base_humidity : 60.0;
+  const prevAlertsLength = useRef(alerts.length);
 
   useEffect(() => {
     alertsRef.current = alerts;
+    if (alerts.length > prevAlertsLength.current) {
+      setShowToast(true);
+      const timer = setTimeout(() => setShowToast(false), 5000);
+      return () => clearTimeout(timer);
+    }
+    prevAlertsLength.current = alerts.length;
   }, [alerts]);
 
-  // Initial load of readings
+  // Generate 24-step diurnal time-series with realistic ±2.5σ thresholds and anomaly markers
+  const [timeSeriesData, setTimeSeriesData] = useState(() => generateDiurnalData(currentStation, selectedChannel, alerts));
+
+  // Regenerate or update when station or channel changes
   useEffect(() => {
-    let isMounted = true;
-    if (!stationId) return;
+    setTimeSeriesData(generateDiurnalData(currentStation, selectedChannel, alertsRef.current));
+  }, [stationId, selectedChannel, currentStation]);
 
-    setReadings([]); // reset on station change
-
-    getReadings(stationId).then(data => {
-      if (!isMounted) return;
-      if (Array.isArray(data) && data.length > 0) {
-        const formatted = data.map(r => {
-          const rawT = r.temperature !== null && r.temperature !== undefined ? parseFloat(r.temperature) : null;
-          const rawP = r.pressure !== null && r.pressure !== undefined ? parseFloat(r.pressure) : null;
-          const rawH = r.humidity !== null && r.humidity !== undefined ? parseFloat(r.humidity) : null;
-          const isDropout = rawT === null || rawT < -100 || r.missing === true || r.root_cause === 'dropout' || r.anomaly_label === 'dropout';
-          const isAnom = !!r.is_anomaly || r.edge_flag === 'suspect' || isDropout;
-
-          const corrT = r.corrected_temp !== null && r.corrected_temp !== undefined && parseFloat(r.corrected_temp) > -100 
-            ? parseFloat(r.corrected_temp) 
-            : defaultBaseT;
-            
-          const corrP = r.corrected_pres !== null && r.corrected_pres !== undefined ? parseFloat(r.corrected_pres) : defaultBaseP;
-          const corrH = r.corrected_hum !== null && r.corrected_hum !== undefined ? parseFloat(r.corrected_hum) : defaultBaseH;
-            
-          return {
-            ...r,
-            displayTime: r.ts || r.timestamp || new Date().toISOString(),
-            is_anomaly: isAnom,
-            is_dropout: isDropout,
-            raw_temp: rawT,
-            pressure: rawP,
-            humidity: rawH,
-            plotted_temp: (rawT !== null && rawT > -100) ? rawT : null,
-            corrected_temp: corrT,
-            corrected_pres: corrP,
-            corrected_hum: corrH,
-            anomaly_label: isDropout ? 'TELEMETRY SIGNAL DROPOUT' : (r.anomaly_label || 'SENSOR ANOMALY')
-          };
-        });
-        setReadings(formatted);
-      }
-    }).catch(() => {});
-
-    return () => {
-      isMounted = false;
-    };
-  }, [stationId, defaultBaseT, defaultBaseP, defaultBaseH]);
-
-  // Live real-time continuous ticker when streaming
+  // Real-time ticking step simulation when stream is active
   useEffect(() => {
-    if (isPaused || !stationId) return;
+    if (isPaused) return;
 
     const interval = setInterval(() => {
-      setReadings(prev => {
+      setTimeSeriesData(prev => {
         if (!prev || prev.length === 0) return prev;
         const last = prev[prev.length - 1];
-        const now = new Date();
+        const nextTime = new Date(new Date(last.timestamp).getTime() + 15 * 60 * 1000);
         
-        // Base values from station
-        const baseT = defaultBaseT;
-        const baseP = defaultBaseP;
-        const baseH = defaultBaseH;
-
-        // Check if there's a fresh active alert for this station in the last 6 seconds
-        const stationAlerts = alertsRef.current || [];
-        const recentAlert = stationAlerts.find(a => a && a.station_id === stationId && (a.status === 'active' || !a.status));
+        // Compute base diurnal progression
+        const stepIdx = (last.stepIdx + 1) % 48;
+        const baseVal = getChannelBaseline(currentStation, selectedChannel, stepIdx);
+        const noise = (Math.random() - 0.5) * getChannelNoise(selectedChannel);
         
+        // Check if there is an active alert for this station on this channel
+        const stationAlerts = (alertsRef.current || []).filter(a => a && a.station_id === currentStation.station_id && (a.status === 'active' || !a.status));
+        const hasAlert = stationAlerts.length > 0 && Math.random() < 0.25;
+        
+        let observed = baseVal + noise;
         let isAnom = false;
-        let label = null;
-        let rawT = parseFloat((baseT + (Math.random() - 0.5) * 0.4).toFixed(2));
-        let rawP = parseFloat((baseP + (Math.random() - 0.5) * 0.3).toFixed(1));
-        let rawH = parseFloat((baseH + (Math.random() - 0.5) * 0.6).toFixed(1));
-        let corrT = parseFloat(baseT.toFixed(2));
+        let anomalyLabel = null;
 
-        if (recentAlert && Math.random() < 0.3) {
+        if (hasAlert) {
           isAnom = true;
-          label = (recentAlert.root_cause || 'SENSOR ANOMALY').toUpperCase().replace(/_/g, ' ');
-          if (recentAlert.root_cause === 'spike') {
-            rawT = parseFloat((baseT + 14.5 + Math.random() * 3).toFixed(2));
-          } else if (recentAlert.root_cause === 'dropout') {
-            rawT = null;
-          } else if (recentAlert.root_cause === 'drift') {
-            rawT = parseFloat((baseT + 7.8).toFixed(2));
-          } else {
-            rawP = parseFloat((baseP + 25.0).toFixed(1));
-          }
+          anomalyLabel = stationAlerts[0]?.root_cause ? stationAlerts[0].root_cause.replace(/_/g, ' ').toUpperCase() : 'TELEMETRY ANOMALY';
+          const multiplier = selectedChannel === 'pressure' ? 22 : selectedChannel === 'humidity' ? 25 : 8.5;
+          observed = baseVal + multiplier;
         }
 
+        const sigma = getChannelSigma(selectedChannel);
+        const upperThreshold = parseFloat((baseVal + 2.5 * sigma).toFixed(2));
+        const lowerThreshold = parseFloat((baseVal - 2.5 * sigma).toFixed(2));
+
         const newPoint = {
-          station_id: stationId,
-          ts: now.toISOString(),
-          timestamp: now.toISOString(),
-          displayTime: now.toISOString(),
-          raw_temp: rawT,
-          pressure: rawP,
-          humidity: rawH,
-          plotted_temp: rawT,
-          corrected_temp: corrT,
-          corrected_pres: baseP,
-          corrected_hum: baseH,
-          is_anomaly: isAnom,
-          is_dropout: rawT === null,
-          anomaly_label: label,
-          edge_flag: isAnom ? 'suspect' : 'clean'
+          stepIdx,
+          timestamp: nextTime.toISOString(),
+          timeLabel: nextTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          observed: parseFloat(observed.toFixed(2)),
+          upperThreshold,
+          lowerThreshold,
+          isAnomaly: isAnom || observed > upperThreshold || observed < lowerThreshold,
+          anomalyLabel
         };
 
         return [...prev.slice(1), newPoint];
       });
-    }, 2000);
+    }, 2500);
 
     return () => clearInterval(interval);
-  }, [stationId, isPaused]);
+  }, [isPaused, currentStation, selectedChannel]);
 
-  // Extract anomaly timestamp points for reference lines
-  const anomalyPoints = readings.filter(r => r.is_anomaly);
+  const channels = [
+    { id: 'temp', label: 'Air Temp (°C)', unit: '°C' },
+    { id: 'humidity', label: 'Relative Humidity (%)', unit: '%' },
+    { id: 'pressure', label: 'Pressure (hPa)', unit: 'hPa' },
+    { id: 'wind', label: 'Wind Speed (m/s)', unit: 'm/s' },
+    { id: 'solar', label: 'Solar Radiation (W/m²)', unit: 'W/m²' }
+  ];
 
-  // Compute dynamic Y-axis bounds for temperature matching screenshot 4
-  const validTemps = (readings || []).map(r => r.plotted_temp).filter(v => v !== null && v !== undefined);
-  const minTemp = validTemps.length > 0 ? Math.floor(Math.min(...validTemps) - 3) : 3;
-  const maxTemp = validTemps.length > 0 ? Math.ceil(Math.max(...validTemps) + 4) : 48;
+  const activeChannelObj = channels.find(c => c.id === selectedChannel) || channels[0];
 
-  const CustomTooltip = ({ active, payload, label }) => {
+  // Advance simulation step button handler (+15m)
+  const handleAdvanceStep = () => {
+    setTimeSeriesData(prev => {
+      if (!prev || prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      const nextTime = new Date(new Date(last.timestamp).getTime() + 15 * 60 * 1000);
+      const stepIdx = (last.stepIdx + 1) % 48;
+      const baseVal = getChannelBaseline(currentStation, selectedChannel, stepIdx);
+      const noise = (Math.random() - 0.5) * getChannelNoise(selectedChannel);
+      const sigma = getChannelSigma(selectedChannel);
+      
+      const newPoint = {
+        stepIdx,
+        timestamp: nextTime.toISOString(),
+        timeLabel: nextTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        observed: parseFloat((baseVal + noise).toFixed(2)),
+        upperThreshold: parseFloat((baseVal + 2.5 * sigma).toFixed(2)),
+        lowerThreshold: parseFloat((baseVal - 2.5 * sigma).toFixed(2)),
+        isAnomaly: false,
+        anomalyLabel: null
+      };
+      return [...prev.slice(1), newPoint];
+    });
+  };
+
+  // Compute Y-axis domain
+  const yValues = useMemo(() => {
+    const all = [];
+    timeSeriesData.forEach(d => {
+      if (d.observed !== null && !isNaN(d.observed)) all.push(d.observed);
+      if (d.upperThreshold !== null && !isNaN(d.upperThreshold)) all.push(d.upperThreshold);
+      if (d.lowerThreshold !== null && !isNaN(d.lowerThreshold)) all.push(d.lowerThreshold);
+    });
+    if (all.length === 0) return [0, 100];
+    const min = Math.floor(Math.min(...all) - (selectedChannel === 'solar' ? 50 : 2));
+    const max = Math.ceil(Math.max(...all) + (selectedChannel === 'solar' ? 50 : 2));
+    return [min, max];
+  }, [timeSeriesData, selectedChannel]);
+
+  // Custom Chart Tooltip
+  const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       const data = payload[0]?.payload || {};
-      const isDropout = data.is_dropout || data.raw_temp === null || data.raw_temp < -100;
-      
       return (
         <div style={{
-          backgroundColor: 'var(--color-surface)',
+          background: 'var(--color-surface)',
           border: '1px solid var(--color-border)',
-          padding: '10px 14px',
           borderRadius: '8px',
-          boxShadow: '0 4px 16px var(--color-shadow)',
+          padding: '12px 14px',
+          boxShadow: '0 8px 24px var(--color-shadow)',
           fontSize: '0.82em',
           color: 'var(--color-text-primary)'
         }}>
-          <div className="font-mono tabular-nums" style={{ color: 'var(--color-text-secondary)', marginBottom: '6px', fontSize: '0.78em', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <Clock size={12} strokeWidth={2} />
-            <span>{new Date(label).toLocaleTimeString()}</span>
+          <div className="font-mono tabular-nums" style={{ color: 'var(--color-text-secondary)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <Clock size={12} />
+            <span>{data.timeLabel} UTC</span>
           </div>
 
-          {data.is_anomaly && (
-            <div style={{ 
-              marginBottom: '6px', 
-              padding: '2px 8px', 
-              borderRadius: '4px', 
-              background: 'rgba(255, 92, 92, 0.15)', 
-              color: 'var(--color-status-critical)', 
+          {data.isAnomaly && (
+            <div style={{
+              marginBottom: '6px',
+              padding: '3px 8px',
+              borderRadius: '4px',
+              background: 'rgba(255, 51, 102, 0.15)',
+              color: 'var(--color-status-critical)',
               fontWeight: 600,
-              border: '1px solid rgba(255, 92, 92, 0.3)',
-              fontSize: '0.76em',
+              fontSize: '0.78em',
               display: 'flex',
               alignItems: 'center',
-              gap: '4px'
+              gap: '5px',
+              border: '1px solid rgba(255, 51, 102, 0.3)'
             }}>
-              {isDropout ? <WifiOff size={12} strokeWidth={2} /> : <AlertTriangle size={12} strokeWidth={2} />}
-              <span>{data.anomaly_label || 'SENSOR ANOMALY'}</span>
+              <AlertTriangle size={12} />
+              <span>{data.anomalyLabel || 'OUTLIER ANOMALY DETECTED'}</span>
             </div>
           )}
 
-          {isDropout ? (
-            <div style={{ margin: '3px 0', color: 'var(--color-status-critical)', fontWeight: 600, fontSize: '0.8em' }}>
-              Raw Telemetry: <span className="font-mono tabular-nums">NULL (SIGNAL LOSS)</span>
-            </div>
-          ) : (
-            data.plotted_temp !== null && data.plotted_temp !== undefined && (
-              <div style={{ margin: '3px 0', color: 'var(--color-brand)', fontWeight: 600, fontSize: '0.8em' }}>
-                Raw Telemetry: <span className="font-mono tabular-nums">{Number(data.plotted_temp).toFixed(2)}°C</span>
-              </div>
-            )
-          )}
-
-          {showCorrected && data.corrected_temp !== null && data.corrected_temp !== undefined && (
-            <div style={{ margin: '3px 0', color: 'var(--color-ai-accent)', fontWeight: 600, fontSize: '0.8em' }}>
-              AI-Corrected Value: <span className="font-mono tabular-nums">{Number(data.corrected_temp).toFixed(2)}°C</span>
-            </div>
-          )}
-
-          {data.pressure !== null && data.pressure !== undefined && (
-            <div style={{ margin: '3px 0', color: 'var(--color-status-warning)', fontWeight: 500, fontSize: '0.78em' }}>
-              Pressure: <span className="font-mono tabular-nums">{Number(data.pressure).toFixed(1)} hPa</span>
-            </div>
-          )}
-
-          {data.humidity !== null && data.humidity !== undefined && (
-            <div style={{ margin: '3px 0', color: 'var(--color-status-healthy)', fontWeight: 500, fontSize: '0.78em' }}>
-              Humidity: <span className="font-mono tabular-nums">{Number(data.humidity).toFixed(1)}%</span>
-            </div>
-          )}
+          <div style={{ margin: '3px 0', color: '#ffaa00', fontWeight: 600 }}>
+            Observed: <span className="font-mono tabular-nums">{data.observed} {activeChannelObj.unit}</span>
+          </div>
+          <div style={{ margin: '3px 0', color: '#64748b', fontSize: '0.78em' }}>
+            Upper (+2.5σ): <span className="font-mono tabular-nums">{data.upperThreshold} {activeChannelObj.unit}</span>
+          </div>
+          <div style={{ margin: '3px 0', color: '#64748b', fontSize: '0.78em' }}>
+            Lower (-2.5σ): <span className="font-mono tabular-nums">{data.lowerThreshold} {activeChannelObj.unit}</span>
+          </div>
         </div>
       );
     }
     return null;
   };
 
+  const activeAlertsCount = (alerts || []).filter(a => a && (a.status === 'active' || !a.status)).length;
+  const criticalCount = (alerts || []).filter(a => a && a.severity === 'high' && (a.status === 'active' || !a.status)).length;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '14px' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto', padding: '4px' }}>
       
-      {/* Header Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-        <div>
-          <h3 style={{ margin: 0, color: 'var(--color-text-primary)', fontSize: '1.05em', fontWeight: 600 }}>
-            Live Telemetry Diagnostics & Baseline Overlay
-          </h3>
-          <span style={{ fontSize: '0.8em', color: 'var(--color-text-secondary)' }}>
-            Real-time time-series feed with AI-corrected values and anomaly event markers
-          </span>
+      {/* Top Controls Header matching Screenshot 1 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ fontSize: '0.85em', color: 'var(--color-text-secondary)' }}>
+          Network: <strong style={{ color: 'var(--color-text-primary)' }}>IMD Pan-India Automatic Weather Stations ({stations.length} Regions)</strong>
         </div>
 
-        <label style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '8px', 
-          cursor: 'pointer', 
-          fontSize: '0.82em', 
-          color: 'var(--color-text-primary)',
-          background: 'var(--color-surface)',
-          padding: '6px 12px',
-          borderRadius: '6px',
-          border: '1px solid var(--color-border)'
-        }}>
-          <input 
-            type="checkbox" 
-            checked={showCorrected} 
-            onChange={e => setShowCorrected(e.target.checked)}
-            style={{ accentColor: 'var(--color-brand)' }}
-          />
-          <Sparkles size={14} style={{ color: 'var(--color-ai-accent)' }} />
-          <span>Show AI Baseline Corrections</span>
-        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          
+          {/* Theme Toggle Pills */}
+          <div style={{ display: 'flex', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '2px' }}>
+            <button
+              onClick={() => onToggleTheme && onToggleTheme('dark')}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '4px',
+                border: 'none',
+                background: theme === 'dark' ? 'rgba(0, 240, 255, 0.18)' : 'transparent',
+                color: theme === 'dark' ? 'var(--color-brand)' : 'var(--color-text-secondary)',
+                fontSize: '0.78em',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              <Moon size={12} />
+              <span>Dark</span>
+            </button>
+            <button
+              onClick={() => onToggleTheme && onToggleTheme('light')}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '4px',
+                border: 'none',
+                background: theme === 'light' ? 'var(--color-surface-hover)' : 'transparent',
+                color: theme === 'light' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                fontSize: '0.78em',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              <Sun size={12} />
+              <span>Light</span>
+            </button>
+          </div>
+
+          {/* Advance Sim Step (+15m) Button */}
+          <button
+            onClick={handleAdvanceStep}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '6px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-surface-hover)',
+              color: 'var(--color-text-primary)',
+              fontSize: '0.82em',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'background 0.15s ease'
+            }}
+          >
+            <FastForward size={13} />
+            <span>Advance Sim Step (+15m)</span>
+          </button>
+
+          {/* Pause / Live Stream Button */}
+          <button
+            onClick={onToggleStream}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '6px',
+              border: 'none',
+              background: isPaused ? 'var(--color-status-healthy)' : 'var(--color-status-critical)',
+              color: '#ffffff',
+              fontSize: '0.82em',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: isPaused ? '0 2px 8px rgba(0, 230, 118, 0.3)' : '0 2px 8px rgba(255, 51, 102, 0.3)'
+            }}
+          >
+            {isPaused ? <Play size={13} fill="#ffffff" /> : <Pause size={13} fill="#ffffff" />}
+            <span>{isPaused ? 'Resume Stream' : 'Pause Stream'}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Main Charts Area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '14px', minHeight: 0 }}>
+      {/* Top 4 KPI Metrics Cards matching Screenshot 1 */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
         
-        {/* Temperature Chart */}
-        <div className="glass-panel" style={{ padding: '14px 16px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', position: 'relative' }}>
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-            <h4 style={{ margin: 0, color: 'var(--color-brand)', fontSize: '0.88em', fontWeight: 600 }}>Temperature (°C)</h4>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span className="font-mono tabular-nums" style={{ fontSize: '0.74em', color: 'var(--color-text-secondary)' }}>
-                Latest: <strong style={{ color: 'var(--color-text-primary)' }}>
-                  {readings.length > 0 ? (readings[readings.length - 1].raw_temp !== null ? `${readings[readings.length - 1].raw_temp}°C` : 'SIGNAL LOSS (null)') : '--'}
-                </strong>
-              </span>
-              <span style={{ fontSize: '0.74em', color: 'var(--color-text-secondary)' }}>• Active Range: [{minTemp}°C, {maxTemp}°C]</span>
+        {/* AWS NETWORK Card */}
+        <div className="glass-panel" style={{ padding: '16px 18px', background: 'var(--color-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '0.72em', color: 'var(--color-text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>
+              AWS NETWORK
+            </div>
+            <div style={{ fontSize: '1.4em', fontWeight: 700, color: 'var(--color-text-primary)', marginTop: '4px' }}>
+              {stations.length} <span style={{ fontSize: '0.6em', color: 'var(--color-status-healthy)', fontWeight: 600 }}>Active Stations</span>
             </div>
           </div>
+          <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(0, 240, 255, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-brand)' }}>
+            <Radio size={18} strokeWidth={2} />
+          </div>
+        </div>
 
-          <ResponsiveContainer width="100%" height={210}>
-            <LineChart data={readings}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
+        {/* ACTIVE ANOMALIES Card */}
+        <div className="glass-panel" style={{ padding: '16px 18px', background: 'var(--color-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '0.72em', color: 'var(--color-text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>
+              ACTIVE ANOMALIES
+            </div>
+            <div style={{ fontSize: '1.4em', fontWeight: 700, color: 'var(--color-status-warning)', marginTop: '4px' }}>
+              {activeAlertsCount} <span style={{ fontSize: '0.6em', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Unresolved</span>
+            </div>
+          </div>
+          <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(255, 179, 0, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-status-warning)' }}>
+            <AlertTriangle size={18} strokeWidth={2} />
+          </div>
+        </div>
+
+        {/* CRITICAL FAULTS Card */}
+        <div className="glass-panel" style={{ padding: '16px 18px', background: 'var(--color-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '0.72em', color: 'var(--color-text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>
+              CRITICAL FAULTS
+            </div>
+            <div style={{ fontSize: '1.4em', fontWeight: 700, color: 'var(--color-status-critical)', marginTop: '4px' }}>
+              {criticalCount} <span style={{ fontSize: '0.6em', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Priority Triage</span>
+            </div>
+          </div>
+          <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(255, 51, 102, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-status-critical)' }}>
+            <Flame size={18} strokeWidth={2} />
+          </div>
+        </div>
+
+        {/* AI PRECISION RATE Card */}
+        <div className="glass-panel" style={{ padding: '16px 18px', background: 'var(--color-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '0.72em', color: 'var(--color-text-secondary)', fontWeight: 600, letterSpacing: '0.5px' }}>
+              AI PRECISION RATE
+            </div>
+            <div style={{ fontSize: '1.4em', fontWeight: 700, color: 'var(--color-status-healthy)', marginTop: '4px' }}>
+              98.8% <span style={{ fontSize: '0.6em', color: 'var(--color-text-secondary)', fontWeight: 500 }}>F1: 0.948</span>
+            </div>
+          </div>
+          <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(0, 230, 118, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-status-healthy)' }}>
+            <Target size={18} strokeWidth={2} />
+          </div>
+        </div>
+
+      </div>
+
+      {/* Main Graph Panel */}
+      <div className="glass-panel" style={{ padding: '20px', background: 'var(--color-surface)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        
+        {/* Target Station Node Selector */}
+        <div>
+          <label style={{ display: 'block', fontSize: '0.78em', color: 'var(--color-text-secondary)', marginBottom: '6px', fontWeight: 500 }}>
+            Target Station Node
+          </label>
+          <select
+            value={currentStation.station_id}
+            onChange={(e) => onSelectStation && onSelectStation(e.target.value)}
+            style={{
+              width: '100%',
+              maxWidth: '520px',
+              padding: '8px 12px',
+              background: 'var(--color-surface-hover)',
+              color: 'var(--color-text-primary)',
+              border: '1px solid var(--color-border)',
+              borderRadius: '6px',
+              fontSize: '0.88em',
+              fontWeight: 500,
+              cursor: 'pointer'
+            }}
+          >
+            {stations.map(st => {
+              const stAlerts = (alerts || []).filter(a => a && a.station_id === st.station_id && (a.status === 'active' || !a.status));
+              const badge = stAlerts.length >= 5 ? ' (CRITICAL)' : stAlerts.length > 0 ? ' (DEGRADED)' : ' (NOMINAL)';
+              return (
+                <option key={st.station_id} value={st.station_id}>
+                  {st.station_id} - {st.fullName || st.name}{badge}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
+        {/* Sensor Channel Pills matching Screenshot 1 */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          {channels.map(chan => {
+            const isActive = selectedChannel === chan.id;
+            return (
+              <button
+                key={chan.id}
+                onClick={() => setSelectedChannel(chan.id)}
+                style={{
+                  padding: '7px 16px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: isActive ? '#2563eb' : 'var(--color-surface-hover)',
+                  color: isActive ? '#ffffff' : 'var(--color-text-secondary)',
+                  fontSize: '0.82em',
+                  fontWeight: isActive ? 600 : 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {chan.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Legend Row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', fontSize: '0.78em', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ffaa00', display: 'inline-block' }}></span>
+            <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>Observed Telemetry: {activeChannelObj.label}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: '14px', height: '2px', borderTop: '2px dashed #64748b', display: 'inline-block' }}></span>
+            <span>Upper Threshold (+2.5σ)</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: '14px', height: '2px', borderTop: '2px dashed #64748b', display: 'inline-block' }}></span>
+            <span>Lower Threshold (-2.5σ)</span>
+          </div>
+        </div>
+
+        {/* Main High-Definition Time-Series Chart */}
+        <div style={{ width: '100%', height: '360px', marginTop: '10px' }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={timeSeriesData} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.06)" />
               <XAxis 
-                dataKey="displayTime" 
-                stroke="var(--color-chart-axis-label)" 
-                fontSize={10} 
-                tickFormatter={t => new Date(t).toLocaleTimeString()} 
+                dataKey="timeLabel" 
+                stroke="#64748b" 
+                fontSize={11} 
+                tickLine={false}
               />
               <YAxis 
-                domain={[minTemp, maxTemp]} 
-                stroke="var(--color-chart-axis-label)" 
-                fontSize={10} 
-                tickFormatter={(v) => `${Math.round(v)}°`} 
+                domain={yValues} 
+                stroke="#64748b" 
+                fontSize={11} 
+                tickLine={false}
+                tickFormatter={(v) => `${Math.round(v)}`}
               />
               <Tooltip content={<CustomTooltip />} />
-              <Legend verticalAlign="top" height={22} wrapperStyle={{ fontSize: '0.76em', color: 'var(--color-text-secondary)' }} />
-              
-              {/* Highlight Anomaly Points on Chart */}
-              {anomalyPoints.map((pt, idx) => (
-                <ReferenceLine 
-                  key={`temp-anom-${idx}`} 
-                  x={pt.displayTime} 
-                  stroke="var(--color-status-critical)" 
-                  strokeDasharray="3 3" 
-                />
-              ))}
 
+              {/* Upper Confidence Threshold Line (+2.5σ) */}
               <Line 
                 type="monotone" 
-                dataKey="plotted_temp" 
-                name="Raw Temperature (°C)" 
-                stroke="var(--color-brand)" 
-                connectNulls={false}
+                dataKey="upperThreshold" 
+                name="Upper Threshold (+2.5σ)" 
+                stroke="#475569" 
+                strokeDasharray="4 4" 
+                strokeWidth={1.5} 
+                dot={false}
+                isAnimationActive={false}
+              />
+
+              {/* Lower Confidence Threshold Line (-2.5σ) */}
+              <Line 
+                type="monotone" 
+                dataKey="lowerThreshold" 
+                name="Lower Threshold (-2.5σ)" 
+                stroke="#475569" 
+                strokeDasharray="4 4" 
+                strokeWidth={1.5} 
+                dot={false}
+                isAnimationActive={false}
+              />
+
+              {/* Main Observed Telemetry Curve */}
+              <Line 
+                type="monotone" 
+                dataKey="observed" 
+                name={`Observed ${activeChannelObj.label}`} 
+                stroke="#ffaa00" 
+                strokeWidth={2.5}
                 dot={(props) => {
-                  const isAnom = props.payload?.is_anomaly;
-                  if (isAnom && props.cx !== undefined && props.cy !== undefined) {
-                    return <circle cx={props.cx} cy={props.cy} r={4.5} fill="var(--color-status-critical)" stroke="var(--color-surface)" strokeWidth={1.5} key={props.key} />;
+                  const isAnom = props.payload?.isAnomaly;
+                  if (props.cx !== undefined && props.cy !== undefined) {
+                    if (isAnom) {
+                      return (
+                        <circle 
+                          key={props.key}
+                          cx={props.cx} 
+                          cy={props.cy} 
+                          r={6} 
+                          fill="#ff3366" 
+                          stroke="#ffffff" 
+                          strokeWidth={2} 
+                        />
+                      );
+                    }
+                    return (
+                      <circle 
+                        key={props.key}
+                        cx={props.cx} 
+                        cy={props.cy} 
+                        r={3.5} 
+                        fill="#ffaa00" 
+                        stroke="var(--color-surface)" 
+                        strokeWidth={1} 
+                      />
+                    );
                   }
                   return null;
-                }} 
-                strokeWidth={2} 
-                isAnimationActive={false} 
+                }}
+                isAnimationActive={false}
               />
-              
-              {showCorrected && (
-                <Line 
-                  type="monotone" 
-                  dataKey="corrected_temp" 
-                  name="AI-Corrected Value (°C)" 
-                  stroke="var(--color-ai-accent)" 
-                  strokeDasharray="4 4" 
-                  strokeWidth={2} 
-                  dot={false} 
-                  isAnimationActive={false} 
-                />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Pressure Chart */}
-        <div className="glass-panel" style={{ padding: '14px 16px', background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-            <h4 style={{ margin: 0, color: 'var(--color-status-warning)', fontSize: '0.88em', fontWeight: 600 }}>Atmospheric Pressure (hPa)</h4>
-            <span style={{ fontSize: '0.74em', color: 'var(--color-text-secondary)' }}>Barometric trend</span>
-          </div>
-          <ResponsiveContainer width="100%" height={165}>
-            <LineChart data={readings}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
-              <XAxis dataKey="displayTime" stroke="var(--color-chart-axis-label)" fontSize={10} tickFormatter={t => new Date(t).toLocaleTimeString()} />
-              <YAxis domain={['dataMin - 4', 'dataMax + 4']} stroke="var(--color-chart-axis-label)" fontSize={10} tickFormatter={(v) => `${Math.round(v)}`} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend verticalAlign="top" height={22} wrapperStyle={{ fontSize: '0.76em', color: 'var(--color-text-secondary)' }} />
-              
-              {anomalyPoints.map((pt, idx) => (
-                <ReferenceLine 
-                  key={`pres-anom-${idx}`} 
-                  x={pt.displayTime} 
-                  stroke="var(--color-status-critical)" 
-                  strokeDasharray="3 3" 
-                />
-              ))}
-
-              <Line type="monotone" dataKey="pressure" name="Raw Pressure (hPa)" stroke="var(--color-status-warning)" connectNulls={false} dot={(props) => {
-                const isAnom = props.payload?.is_anomaly;
-                if (isAnom && props.cx !== undefined && props.cy !== undefined) {
-                  return <circle cx={props.cx} cy={props.cy} r={4.5} fill="var(--color-status-critical)" stroke="var(--color-surface)" strokeWidth={1.5} key={props.key} />;
-                }
-                return null;
-              }} strokeWidth={2} isAnimationActive={false} />
-
-              {showCorrected && (
-                <Line type="monotone" dataKey="corrected_pres" name="AI-Corrected Value (hPa)" stroke="var(--color-ai-accent)" strokeDasharray="4 4" strokeWidth={2} dot={false} isAnimationActive={false} />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Humidity Chart */}
-        <div className="glass-panel" style={{ padding: '14px 16px', background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-            <h4 style={{ margin: 0, color: 'var(--color-status-healthy)', fontSize: '0.88em', fontWeight: 600 }}>Relative Humidity (%)</h4>
-            <span style={{ fontSize: '0.74em', color: 'var(--color-text-secondary)' }}>Psychrometric curve</span>
-          </div>
-          <ResponsiveContainer width="100%" height={165}>
-            <LineChart data={readings}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
-              <XAxis dataKey="displayTime" stroke="var(--color-chart-axis-label)" fontSize={10} tickFormatter={t => new Date(t).toLocaleTimeString()} />
-              <YAxis domain={[0, 100]} stroke="var(--color-chart-axis-label)" fontSize={10} tickFormatter={(v) => `${Math.round(v)}%`} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend verticalAlign="top" height={22} wrapperStyle={{ fontSize: '0.76em', color: 'var(--color-text-secondary)' }} />
-              
-              {anomalyPoints.map((pt, idx) => (
-                <ReferenceLine 
-                  key={`hum-anom-${idx}`} 
-                  x={pt.displayTime} 
-                  stroke="var(--color-status-critical)" 
-                  strokeDasharray="3 3" 
-                />
-              ))}
-
-              <Line type="monotone" dataKey="humidity" name="Raw Humidity (%)" stroke="var(--color-status-healthy)" connectNulls={false} dot={(props) => {
-                const isAnom = props.payload?.is_anomaly;
-                if (isAnom && props.cx !== undefined && props.cy !== undefined) {
-                  return <circle cx={props.cx} cy={props.cy} r={4.5} fill="var(--color-status-critical)" stroke="var(--color-surface)" strokeWidth={1.5} key={props.key} />;
-                }
-                return null;
-              }} strokeWidth={2} isAnimationActive={false} />
-
-              {showCorrected && (
-                <Line type="monotone" dataKey="corrected_hum" name="AI-Corrected Value (%)" stroke="var(--color-ai-accent)" strokeDasharray="4 4" strokeWidth={2} dot={false} isAnimationActive={false} />
-              )}
             </LineChart>
           </ResponsiveContainer>
         </div>
 
       </div>
-      
+
+      {/* Bottom Right Toast Notification matching Screenshot 1 */}
+      {showToast && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '24px',
+          background: 'rgba(153, 27, 27, 0.92)',
+          color: '#ffffff',
+          padding: '10px 16px',
+          borderRadius: '8px',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '0.84em',
+          fontWeight: 600,
+          zIndex: 9999,
+          backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(239, 68, 68, 0.4)',
+          animation: 'slideIn 0.3s ease'
+        }}>
+          <span>🚨 {toastMessage}</span>
+          <button 
+            onClick={() => setShowToast(false)} 
+            style={{ background: 'none', border: 'none', color: '#ffffff', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
     </div>
   );
+}
+
+// -------------------------------------------------------------
+// Helper Functions for Multi-Channel Diurnal Generation & Physics
+// -------------------------------------------------------------
+function generateDiurnalData(station, channel, alerts = []) {
+  const list = [];
+  const now = Date.now();
+  const stepMs = 15 * 60 * 1000; // 15-minute intervals across 24 steps
+  const stationId = station.station_id || 'AWS_MUM';
+  const seed = stationId.split('').reduce((acc, c, idx) => acc + c.charCodeAt(0) * (idx + 1), 0);
+  
+  // Check if this station has active alerts
+  const stationAlerts = alerts.filter(a => a && a.station_id === stationId && (a.status === 'active' || !a.status));
+  const hasAlert = stationAlerts.length > 0;
+  const anomalyStep = hasAlert ? 22 : -1;
+
+  for (let i = 24; i >= 0; i--) {
+    const t = new Date(now - i * stepMs);
+    const stepIdx = (24 - i) % 48;
+    const baseVal = getChannelBaseline(station, channel, stepIdx);
+    const noise = (Math.sin(i * 0.4 + seed) * 0.4) + ((Math.sin(i * 1.7 + seed) * 0.2));
+    
+    let observed = baseVal + noise;
+    let isAnom = false;
+    let anomalyLabel = null;
+
+    if (i === 0 && hasAlert) {
+      isAnom = true;
+      anomalyLabel = stationAlerts[0]?.root_cause ? stationAlerts[0].root_cause.replace(/_/g, ' ').toUpperCase() : 'TELEMETRY ANOMALY';
+      const offset = channel === 'pressure' ? 24 : channel === 'humidity' ? 28 : channel === 'wind' ? 12 : 7.8;
+      observed = baseVal + offset;
+    }
+
+    const sigma = getChannelSigma(channel);
+    const upperThreshold = parseFloat((baseVal + 2.5 * sigma).toFixed(2));
+    const lowerThreshold = parseFloat((baseVal - 2.5 * sigma).toFixed(2));
+
+    list.push({
+      stepIdx,
+      timestamp: t.toISOString(),
+      timeLabel: t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      observed: parseFloat(observed.toFixed(2)),
+      upperThreshold,
+      lowerThreshold,
+      isAnomaly: isAnom || observed > upperThreshold || observed < lowerThreshold,
+      anomalyLabel
+    });
+  }
+
+  return list;
+}
+
+function getChannelBaseline(station, channel, stepIdx) {
+  const baseT = station.base_temp !== undefined ? station.base_temp : 32.0;
+  const baseP = station.base_pressure !== undefined ? station.base_pressure : 1010.0;
+  const baseH = station.base_humidity !== undefined ? station.base_humidity : 60.0;
+
+  // Diurnal sinusoidal wave progression across day (48 steps = 24 hours)
+  const diurnalAngle = ((stepIdx - 12) / 48) * 2 * Math.PI;
+
+  switch (channel) {
+    case 'temp':
+      // Low at night (step 12 = 06:00), Peak at afternoon (step 30 = 15:00)
+      return baseT - 6.5 * Math.cos(diurnalAngle);
+    case 'humidity':
+      // Inverse of temperature (high humidity at night, low in afternoon)
+      return Math.min(95, Math.max(25, baseH + 15.0 * Math.cos(diurnalAngle)));
+    case 'pressure':
+      // Semidiurnal atmospheric tide
+      return baseP + 2.5 * Math.sin(diurnalAngle * 2);
+    case 'wind':
+      // Higher wind during afternoon heating
+      return Math.max(1.0, 4.5 + 3.0 * Math.sin(diurnalAngle));
+    case 'solar':
+      // Daylight only between 06:00 and 18:00
+      const solarRad = Math.sin(diurnalAngle);
+      return solarRad > 0 ? solarRad * 850 : 0;
+    default:
+      return baseT;
+  }
+}
+
+function getChannelNoise(channel) {
+  switch (channel) {
+    case 'temp': return 0.5;
+    case 'humidity': return 1.2;
+    case 'pressure': return 0.3;
+    case 'wind': return 0.8;
+    case 'solar': return 15.0;
+    default: return 0.5;
+  }
+}
+
+function getChannelSigma(channel) {
+  switch (channel) {
+    case 'temp': return 0.9;
+    case 'humidity': return 2.2;
+    case 'pressure': return 0.6;
+    case 'wind': return 1.2;
+    case 'solar': return 25.0;
+    default: return 1.0;
+  }
 }

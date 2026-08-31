@@ -174,7 +174,7 @@ export default function FaultInjector({ stations: propStations = [], onInjection
       
       const syntheticAlert = (res && res.alert && res.is_anomaly !== undefined) 
         ? res.alert 
-        : generateSyntheticAlert(selectedStationId, anomalyType, stations);
+        : generateSyntheticAlert(selectedStationId, anomalyType, stations, payload);
 
       const realConfidence = (res && typeof res.confidence === 'number' && !isNaN(res.confidence))
         ? res.confidence
@@ -215,7 +215,18 @@ export default function FaultInjector({ stations: propStations = [], onInjection
         onInjectionSuccess(syntheticAlert);
       }
     } catch (e) {
-      const syntheticAlert = generateSyntheticAlert(selectedStationId, anomalyType, stations);
+      const payloadFallback = {
+        station_id: selectedStationId,
+        anomaly_type: anomalyType,
+        severity: calculatedSeverity,
+        target_channel: targetChannel,
+        spatial_div_mode: spatialDivMode,
+        duration: faultDuration,
+        temperature: anomalyType === 'dropout' ? null : parseFloat(temperature),
+        pressure: anomalyType === 'dropout' ? null : parseFloat(pressure),
+        humidity: anomalyType === 'dropout' ? null : parseFloat(humidity)
+      };
+      const syntheticAlert = generateSyntheticAlert(selectedStationId, anomalyType, stations, payloadFallback);
       const resultObj = {
         status: 'injected',
         is_anomaly: true,

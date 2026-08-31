@@ -314,9 +314,14 @@ const IncidentCard = React.memo(function IncidentCard({
 
   // Helper to render specialized telemetry rows strictly per fault type
   const renderTelemetryTableRows = () => {
+    const currentSt = (stations || []).find(s => s && s.station_id === a.station_id) || {};
+    const fallbackBaseT = currentSt.base_temp !== undefined ? currentSt.base_temp : 32.0;
+    const fallbackBaseP = currentSt.base_pressure !== undefined ? currentSt.base_pressure : 1010.0;
+    const fallbackBaseH = currentSt.base_humidity !== undefined ? currentSt.base_humidity : 60.0;
+
     if (rootCause === 'dropout') {
       return ['temperature', 'pressure', 'humidity'].map(m => {
-        const corrVal = corr ? corr[m] : (m === 'temperature' ? 30.0 : m === 'pressure' ? 1010.0 : 60.0);
+        const corrVal = corr ? corr[m] : (m === 'temperature' ? fallbackBaseT : m === 'pressure' ? fallbackBaseP : fallbackBaseH);
         const corrDisplay = `${Number(corrVal).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}`;
         return (
           <tr key={m} style={{ borderTop: '1px solid var(--color-border)' }}>
@@ -334,9 +339,9 @@ const IncidentCard = React.memo(function IncidentCard({
 
     if (rootCause === 'cross_parameter_inconsistency') {
       return ['temperature', 'pressure', 'humidity'].map(m => {
-        const val = raw ? raw[m] : (m === 'temperature' ? 52.0 : m === 'pressure' ? 1032.0 : 96.0);
+        const val = raw ? raw[m] : (m === 'temperature' ? 52.0 : m === 'pressure' ? (fallbackBaseP + 22.0) : 96.0);
         const rawDisplay = `${Number(val).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}`;
-        const corrVal = corr ? corr[m] : (m === 'temperature' ? 30.0 : m === 'pressure' ? 1010.0 : 60.0);
+        const corrVal = corr ? corr[m] : (m === 'temperature' ? fallbackBaseT : m === 'pressure' ? fallbackBaseP : fallbackBaseH);
         const corrDisplay = `${Number(corrVal).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}`;
         return (
           <tr key={m} style={{ borderTop: '1px solid var(--color-border)' }}>
@@ -354,15 +359,16 @@ const IncidentCard = React.memo(function IncidentCard({
 
     if (rootCause === 'frozen_value') {
       return ['temperature', 'pressure', 'humidity'].map(m => {
-        const val = raw ? raw[m] : (m === 'temperature' ? 30.0 : m === 'pressure' ? 1010.0 : 60.0);
-        const rawDisplay = `${Number(val).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}`;
-        const corrVal = corr ? corr[m] : (m === 'temperature' ? 30.0 : m === 'pressure' ? 1010.0 : 60.0);
+        const rawVal = raw ? raw[m] : (m === 'temperature' ? fallbackBaseT : m === 'pressure' ? fallbackBaseP : fallbackBaseH);
+        const rawDisplay = `${Number(rawVal).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}`;
+        const corrVal = corr ? corr[m] : (m === 'temperature' ? fallbackBaseT : m === 'pressure' ? fallbackBaseP : fallbackBaseH);
         const corrDisplay = `${Number(corrVal).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}`;
+        const isOffset = Math.abs(Number(rawVal) - Number(corrVal)) > 0.1;
         return (
           <tr key={m} style={{ borderTop: '1px solid var(--color-border)' }}>
             <td style={{ padding: '6px 8px', textTransform: 'capitalize', color: 'var(--color-text-primary)', fontWeight: 500 }}>{m}</td>
             <td className="font-mono tabular-nums" style={{ padding: '6px 8px', color: 'var(--color-status-critical)', fontWeight: 600 }}>
-              {rawDisplay} <span style={{ fontSize: '0.85em' }}>(Frozen Static)</span>
+              {rawDisplay} <span style={{ fontSize: '0.85em' }}>{isOffset ? '(Frozen Injected Offset)' : '(Frozen Static flatline)'}</span>
             </td>
             <td className="font-mono tabular-nums" style={{ padding: '6px 8px', color: 'var(--color-status-healthy)', fontWeight: 600 }}>
               {corrDisplay} <span style={{ fontSize: '0.85em', color: 'var(--color-text-secondary)' }}>(Diurnal Baseline)</span>
@@ -373,9 +379,9 @@ const IncidentCard = React.memo(function IncidentCard({
     }
 
     // Determine affected channel for spike, drift, spatial_outlier
-    const deltaT = (raw.temperature !== null && corr.temperature !== null) ? Math.abs(raw.temperature - corr.temperature) : 0;
-    const deltaP = (raw.pressure !== null && corr.pressure !== null) ? Math.abs(raw.pressure - corr.pressure) : 0;
-    const deltaH = (raw.humidity !== null && corr.humidity !== null) ? Math.abs(raw.humidity - corr.humidity) : 0;
+    const deltaT = (raw && raw.temperature !== null && corr && corr.temperature !== null) ? Math.abs(raw.temperature - corr.temperature) : 0;
+    const deltaP = (raw && raw.pressure !== null && corr && corr.pressure !== null) ? Math.abs(raw.pressure - corr.pressure) : 0;
+    const deltaH = (raw && raw.humidity !== null && corr && corr.humidity !== null) ? Math.abs(raw.humidity - corr.humidity) : 0;
 
     let targetParam = 'temperature';
     if (deltaP > 15 && deltaP > deltaT) targetParam = 'pressure';
@@ -383,10 +389,10 @@ const IncidentCard = React.memo(function IncidentCard({
 
     return ['temperature', 'pressure', 'humidity'].map(m => {
       const isTarget = m === targetParam || (rootCause === 'spatial_outlier' && (m === 'temperature' || (m === 'pressure' && deltaP > 8)));
-      const val = raw ? raw[m] : null;
-      const rawDisplay = val !== null ? `${Number(val).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}` : '--';
-      const corrVal = corr ? corr[m] : null;
-      const corrDisplay = corrVal !== null ? `${Number(corrVal).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}` : '--';
+      const val = raw ? raw[m] : (m === 'temperature' ? fallbackBaseT : m === 'pressure' ? fallbackBaseP : fallbackBaseH);
+      const rawDisplay = val !== null && val !== undefined ? `${Number(val).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}` : '--';
+      const corrVal = corr ? corr[m] : (m === 'temperature' ? fallbackBaseT : m === 'pressure' ? fallbackBaseP : fallbackBaseH);
+      const corrDisplay = corrVal !== null && corrVal !== undefined ? `${Number(corrVal).toFixed(2)}${m === 'temperature' ? '°C' : m === 'pressure' ? ' hPa' : '%'}` : '--';
 
       return (
         <tr key={m} style={{ borderTop: '1px solid var(--color-border)' }}>

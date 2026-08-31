@@ -24,15 +24,15 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
   return Math.round(R * c * 10) / 10;
 }
 
-export function generateSyntheticAlert(stationId, forcedType = null, stationsList = DEFAULT_INDIAN_STATIONS) {
+export function generateSyntheticAlert(stationId, forcedType = null, stationsList = DEFAULT_INDIAN_STATIONS, customValues = null) {
   const station = stationsList.find(s => s && s.station_id === stationId) || stationsList[0] || DEFAULT_INDIAN_STATIONS[0];
-  const type = forcedType || ANOMALY_TYPES[Math.floor(Math.random() * ANOMALY_TYPES.length)];
+  const type = forcedType || (customValues && customValues.anomaly_type) || ANOMALY_TYPES[Math.floor(Math.random() * ANOMALY_TYPES.length)];
   const now = new Date();
   const ts = now.toISOString();
   
-  const baseT = station.base_temp || 30.0;
-  const baseP = station.base_pressure || 1010.0;
-  const baseH = station.base_humidity || 60.0;
+  const baseT = station.base_temp !== undefined ? station.base_temp : 32.0;
+  const baseP = station.base_pressure !== undefined ? station.base_pressure : 1010.0;
+  const baseH = station.base_humidity !== undefined ? station.base_humidity : 60.0;
 
   let raw = {
     station_id: station.station_id,
@@ -48,8 +48,10 @@ export function generateSyntheticAlert(stationId, forcedType = null, stationsLis
     humidity: parseFloat(baseH.toFixed(2))
   };
 
-  let severity = 'high';
-  let confidence = parseFloat((0.96 + Math.random() * 0.038).toFixed(3));
+  let severity = (customValues && customValues.severity && customValues.severity !== 'auto') ? customValues.severity : 'high';
+  let confidence = (customValues && typeof customValues.confidence === 'number' && !isNaN(customValues.confidence)) 
+    ? customValues.confidence 
+    : parseFloat((0.965 + Math.random() * 0.03).toFixed(3));
   let shapValues = {};
   let summary = '';
   let topFeatures = [];
@@ -75,38 +77,71 @@ export function generateSyntheticAlert(stationId, forcedType = null, stationsLis
 
   switch(type) {
     case 'spike': {
-      severity = 'high';
-      const deltaT = parseFloat((16.0 + Math.random() * 6.0).toFixed(1));
-      raw.temperature = parseFloat((baseT + deltaT).toFixed(1));
+      severity = severity || 'high';
+      const targetChan = (customValues && customValues.target_channel) || 'temperature';
+      if (customValues && customValues.temperature !== undefined && targetChan === 'temperature') {
+        raw.temperature = parseFloat(Number(customValues.temperature).toFixed(1));
+      } else if (targetChan === 'pressure' && customValues && customValues.pressure !== undefined) {
+        raw.pressure = parseFloat(Number(customValues.pressure).toFixed(1));
+      } else if (targetChan === 'humidity' && customValues && customValues.humidity !== undefined) {
+        raw.humidity = parseFloat(Number(customValues.humidity).toFixed(1));
+      } else {
+        const deltaT = parseFloat((16.0 + Math.random() * 6.0).toFixed(1));
+        raw.temperature = parseFloat((baseT + deltaT).toFixed(1));
+      }
+      
+      const deltaTVal = Math.abs(raw.temperature - baseT).toFixed(1);
       shapValues = { "Statistical Z-Score": 48.5, "Instantaneous ROC": 32.1, "Spatial Residual": 19.4 };
       topFeatures = [
         { feature: "Statistical Z-Score", impact: 48.5 },
         { feature: "Instantaneous ROC", impact: 32.1 },
         { feature: "Spatial Residual", impact: 19.4 }
       ];
-      summary = `Transient sensor spike: abrupt telemetry step of +${deltaT}°C diverging from calibrated diurnal baseline envelope.`;
+      summary = `Transient sensor spike: abrupt telemetry step of +${deltaTVal}°C diverging from calibrated diurnal baseline envelope (${baseT}°C).`;
       break;
     }
 
     case 'drift': {
-      severity = 'medium';
-      const deltaT = parseFloat((3.5 + Math.random() * 2.5).toFixed(1));
-      raw.temperature = parseFloat((baseT + deltaT).toFixed(1));
+      severity = severity || 'medium';
+      const targetChan = (customValues && customValues.target_channel) || 'temperature';
+      if (customValues && customValues.temperature !== undefined && targetChan === 'temperature') {
+        raw.temperature = parseFloat(Number(customValues.temperature).toFixed(1));
+      } else if (targetChan === 'pressure' && customValues && customValues.pressure !== undefined) {
+        raw.pressure = parseFloat(Number(customValues.pressure).toFixed(1));
+      } else if (targetChan === 'humidity' && customValues && customValues.humidity !== undefined) {
+        raw.humidity = parseFloat(Number(customValues.humidity).toFixed(1));
+      } else {
+        const deltaT = parseFloat((3.5 + Math.random() * 2.5).toFixed(1));
+        raw.temperature = parseFloat((baseT + deltaT).toFixed(1));
+      }
+      const deltaTVal = Math.abs(raw.temperature - baseT).toFixed(1);
       shapValues = { "Temporal Inconsistency": 52.4, "Rate of Change Trend": 29.8, "Statistical Z-Score": 17.8 };
       topFeatures = [
         { feature: "Temporal Inconsistency", impact: 52.4 },
         { feature: "Rate of Change Trend", impact: 29.8 },
         { feature: "Statistical Z-Score", impact: 17.8 }
       ];
-      summary = `Progressive calibration decay: persistent monotonic deviation reaching +${deltaT}°C across sequential observation cycles.`;
+      summary = `Progressive calibration decay: persistent monotonic deviation reaching +${deltaTVal}°C across sequential observation cycles.`;
       break;
     }
 
     case 'frozen_value': {
-      severity = 'medium';
-      raw.temperature = parseFloat(baseT.toFixed(1));
-      raw.pressure = parseFloat(baseP.toFixed(1));
-      raw.humidity = parseFloat(baseH.toFixed(1));
+      severity = severity || 'medium';
+      if (customValues) {
+        if (customValues.temperature !== null && customValues.temperature !== undefined) {
+          raw.temperature = parseFloat(Number(customValues.temperature).toFixed(1));
+        }
+        if (customValues.pressure !== null && customValues.pressure !== undefined) {
+          raw.pressure = parseFloat(Number(customValues.pressure).toFixed(1));
+        }
+        if (customValues.humidity !== null && customValues.humidity !== undefined) {
+          raw.humidity = parseFloat(Number(customValues.humidity).toFixed(1));
+        }
+      } else {
+        raw.temperature = parseFloat(baseT.toFixed(1));
+        raw.pressure = parseFloat(baseP.toFixed(1));
+        raw.humidity = parseFloat(baseH.toFixed(1));
+      }
       shapValues = { "Hardware Edge ROC": 64.2, "Zero Variance Metric": 24.6, "Temporal Flatline": 11.2 };
       topFeatures = [
         { feature: "Hardware Edge ROC", impact: 64.2 },
@@ -118,10 +153,10 @@ export function generateSyntheticAlert(stationId, forcedType = null, stationsLis
     }
 
     case 'cross_parameter_inconsistency': {
-      severity = 'high';
-      raw.temperature = parseFloat((51.5 + Math.random() * 2.5).toFixed(1));
-      raw.humidity = parseFloat((95.0 + Math.random() * 4.0).toFixed(1));
-      raw.pressure = parseFloat((baseP + 22.0).toFixed(1));
+      severity = severity || 'high';
+      raw.temperature = (customValues && customValues.temperature !== null && customValues.temperature !== undefined) ? parseFloat(Number(customValues.temperature).toFixed(1)) : parseFloat((51.5 + Math.random() * 2.5).toFixed(1));
+      raw.humidity = (customValues && customValues.humidity !== null && customValues.humidity !== undefined) ? parseFloat(Number(customValues.humidity).toFixed(1)) : parseFloat((95.0 + Math.random() * 4.0).toFixed(1));
+      raw.pressure = (customValues && customValues.pressure !== null && customValues.pressure !== undefined) ? parseFloat(Number(customValues.pressure).toFixed(1)) : parseFloat((baseP + 22.0).toFixed(1));
       shapValues = { "Psychrometric Saturation": 58.6, "Multivariate Correlation": 26.2, "Statistical Boundary": 15.2 };
       topFeatures = [
         { feature: "Psychrometric Saturation", impact: 58.6 },
@@ -133,9 +168,12 @@ export function generateSyntheticAlert(stationId, forcedType = null, stationsLis
     }
 
     case 'spatial_outlier': {
-      severity = 'high';
+      severity = severity || 'high';
       const deltaT = parseFloat((13.5 + Math.random() * 4.0).toFixed(1));
-      raw.temperature = parseFloat((avgNeighborT + deltaT).toFixed(1));
+      raw.temperature = (customValues && customValues.temperature !== null && customValues.temperature !== undefined) ? parseFloat(Number(customValues.temperature).toFixed(1)) : parseFloat((avgNeighborT + deltaT).toFixed(1));
+      if (customValues && customValues.pressure !== undefined) {
+        raw.pressure = parseFloat(Number(customValues.pressure).toFixed(1));
+      }
       spatialEvidence.target_temp = raw.temperature;
       spatialEvidence.delta_temp = deltaT;
       shapValues = { "Spatial Divergence": 56.8, "Cluster Median Residual": 28.4, "Statistical Z-Score": 14.8 };
@@ -149,7 +187,7 @@ export function generateSyntheticAlert(stationId, forcedType = null, stationsLis
     }
 
     case 'dropout': {
-      severity = 'high';
+      severity = severity || 'high';
       raw.temperature = null;
       raw.pressure = null;
       raw.humidity = null;

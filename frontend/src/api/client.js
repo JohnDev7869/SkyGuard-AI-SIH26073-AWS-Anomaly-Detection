@@ -38,21 +38,36 @@ const isArray = (v) => Array.isArray(v);
 const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isHtml = (data) => typeof data === 'string' && (data.includes('<!doctype') || data.includes('<html') || data.includes('<!DOCTYPE'));
 
-// Generate realistic 2-second spaced telemetry stream matching Screenshot 4 with visible anomaly markers
+// Generate realistic 2-second spaced telemetry stream with distinct station-specific signatures and anomaly markers
 export const generateMockReadings = (stationId) => {
   const station = DEFAULT_INDIAN_STATIONS.find(s => s.station_id === stationId) || DEFAULT_INDIAN_STATIONS[0];
   const list = [];
   const now = Date.now();
   const stepMs = 2500; // 2.5s per tick
-  const baseT = station.base_temp || 32.0;
-  const baseP = station.base_pressure || 1010.0;
-  const baseH = station.base_humidity || 60.0;
+  const baseT = station.base_temp !== undefined ? station.base_temp : 32.0;
+  const baseP = station.base_pressure !== undefined ? station.base_pressure : 1010.0;
+  const baseH = station.base_humidity !== undefined ? station.base_humidity : 60.0;
+
+  // Derive unique station seed for distinct waveform frequencies, phase, and characteristics
+  const idStr = station.station_id || 'AWS_MUM';
+  const seed = idStr.split('').reduce((acc, c, idx) => acc + c.charCodeAt(0) * (idx + 3), 0);
+  const freqT = 0.22 + ((seed % 7) * 0.035);
+  const freqP = 0.18 + (((seed >> 1) % 6) * 0.03);
+  const freqH = 0.26 + (((seed >> 2) % 5) * 0.04);
+  const phaseT = ((seed % 360) * Math.PI) / 180;
+  const phaseP = (((seed * 7) % 360) * Math.PI) / 180;
+  const phaseH = (((seed * 13) % 360) * Math.PI) / 180;
+
+  // Station-specific anomaly pulse locations
+  const anomIdx1 = 20 + (seed % 6); // between 20 and 25
+  const anomIdx2 = 12 + ((seed >> 2) % 5); // between 12 and 16
+  const hasSecondAnom = (seed % 3) !== 0;
 
   for (let i = 28; i >= 0; i--) {
     const t = new Date(now - i * stepMs);
-    const noiseT = (Math.sin(i * 0.4) * 1.2 + (Math.random() - 0.5) * 0.4);
-    const noiseP = (Math.cos(i * 0.3) * 0.8 + (Math.random() - 0.5) * 0.3);
-    const noiseH = (-Math.sin(i * 0.4) * 2.0 + (Math.random() - 0.5) * 0.8);
+    const noiseT = Math.sin(i * freqT + phaseT) * 0.9 + Math.cos(i * 0.1 + phaseT) * 0.4 + (Math.sin(i * 3.1 + seed) * 0.15);
+    const noiseP = Math.cos(i * freqP + phaseP) * 0.7 + Math.sin(i * 0.15 + phaseP) * 0.3 + (Math.cos(i * 2.7 + seed) * 0.1);
+    const noiseH = -Math.sin(i * freqH + phaseH) * 1.5 + Math.cos(i * 0.12 + phaseH) * 0.6 + (Math.sin(i * 2.3 + seed) * 0.2);
 
     let rawT = parseFloat((baseT + noiseT).toFixed(2));
     let rawP = parseFloat((baseP + noiseP).toFixed(1));
@@ -62,34 +77,40 @@ export const generateMockReadings = (stationId) => {
     let label = null;
     let severity = 'medium';
 
-    // Injected Anomaly at index 5 (Transient Spike)
-    if (i === 24) {
+    // Injected Anomaly 1 (Specific to station characteristics)
+    if (i === anomIdx1) {
       isAnom = true;
-      rawT = parseFloat((baseT + 16.5).toFixed(2));
-      label = 'TRANSIENT SENSOR SPIKE';
-      severity = 'high';
+      if (seed % 4 === 0) {
+        rawT = parseFloat((baseT + 15.5 + ((seed % 5) * 0.8)).toFixed(2));
+        label = 'TRANSIENT SENSOR SPIKE';
+        severity = 'high';
+      } else if (seed % 4 === 1) {
+        rawT = parseFloat((baseT - 16.0 - ((seed % 4) * 0.7)).toFixed(2));
+        label = 'STEP DIVERGENCE';
+        severity = 'high';
+      } else if (seed % 4 === 2) {
+        rawP = parseFloat((baseP + 32.0 + ((seed % 6) * 1.2)).toFixed(1));
+        label = 'PRESSURE TRANSIENT SURGE';
+        severity = 'high';
+      } else {
+        rawH = Math.min(99.0, parseFloat((baseH + 34.0).toFixed(1)));
+        rawT = parseFloat((baseT + 12.0).toFixed(2));
+        label = 'PSYCHROMETRIC VIOLATION';
+        severity = 'high';
+      }
     }
-    // Injected Anomaly at index 6 (Spike decay)
-    else if (i === 23) {
+    // Injected Anomaly 2 (Secondary pulse for variety)
+    else if (hasSecondAnom && i === anomIdx2) {
       isAnom = true;
-      rawT = parseFloat((baseT + 8.2).toFixed(2));
-      label = 'TRANSIENT SENSOR SPIKE';
-      severity = 'high';
-    }
-    // Injected Anomaly at index 7 (Drop anomaly)
-    else if (i === 22) {
-      isAnom = true;
-      rawT = parseFloat((baseT - 18.0).toFixed(2));
-      label = 'STEP DIVERGENCE';
-      severity = 'high';
-    }
-    // Injected Anomaly at index 14 (Pressure/Hum spike)
-    else if (i === 14) {
-      isAnom = true;
-      rawP = parseFloat((baseP + 38.0).toFixed(1));
-      rawT = parseFloat((baseT + 3.2).toFixed(2));
-      label = 'CROSS-CHANNEL DIVERGENCE';
-      severity = 'medium';
+      if (seed % 2 === 0) {
+        rawT = parseFloat((baseT + 7.5 + ((seed % 3) * 0.6)).toFixed(2));
+        label = 'SENSOR CALIBRATION DRIFT';
+        severity = 'medium';
+      } else {
+        rawP = parseFloat((baseP - 24.0 - ((seed % 4) * 1.0)).toFixed(1));
+        label = 'BAROMETRIC ANOMALY';
+        severity = 'medium';
+      }
     }
 
     list.push({
@@ -103,9 +124,9 @@ export const generateMockReadings = (stationId) => {
       is_anomaly: isAnom,
       anomaly_label: label,
       severity: severity,
-      corrected_temp: parseFloat((baseT + (Math.sin(i * 0.4) * 0.5)).toFixed(2)),
-      corrected_pres: parseFloat(baseP.toFixed(1)),
-      corrected_hum: parseFloat(baseH.toFixed(1))
+      corrected_temp: parseFloat((baseT + Math.sin(i * freqT + phaseT) * 0.4).toFixed(2)),
+      corrected_pres: parseFloat((baseP + Math.cos(i * freqP + phaseP) * 0.3).toFixed(1)),
+      corrected_hum: parseFloat((baseH - Math.sin(i * freqH + phaseH) * 0.6).toFixed(1))
     });
   }
   return list;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getReadings } from '../api/client';
+import { getReadings, DEFAULT_INDIAN_STATIONS } from '../api/client';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts';
 import { Sparkles, Clock, AlertTriangle, WifiOff } from 'lucide-react';
 
@@ -7,6 +7,11 @@ export default function StationDetail({ stationId, alerts = [], isPaused = false
   const [readings, setReadings] = useState([]);
   const [showCorrected, setShowCorrected] = useState(true);
   const alertsRef = useRef(alerts);
+
+  const currentStation = DEFAULT_INDIAN_STATIONS.find(s => s.station_id === stationId) || DEFAULT_INDIAN_STATIONS[0];
+  const defaultBaseT = currentStation.base_temp !== undefined ? currentStation.base_temp : 32.0;
+  const defaultBaseP = currentStation.base_pressure !== undefined ? currentStation.base_pressure : 1010.0;
+  const defaultBaseH = currentStation.base_humidity !== undefined ? currentStation.base_humidity : 60.0;
 
   useEffect(() => {
     alertsRef.current = alerts;
@@ -16,6 +21,8 @@ export default function StationDetail({ stationId, alerts = [], isPaused = false
   useEffect(() => {
     let isMounted = true;
     if (!stationId) return;
+
+    setReadings([]); // reset on station change
 
     getReadings(stationId).then(data => {
       if (!isMounted) return;
@@ -29,10 +36,10 @@ export default function StationDetail({ stationId, alerts = [], isPaused = false
 
           const corrT = r.corrected_temp !== null && r.corrected_temp !== undefined && parseFloat(r.corrected_temp) > -100 
             ? parseFloat(r.corrected_temp) 
-            : (rawT !== null && rawT > -100 ? rawT : 32.0);
+            : defaultBaseT;
             
-          const corrP = r.corrected_pres !== null && r.corrected_pres !== undefined ? parseFloat(r.corrected_pres) : (rawP !== null ? rawP : 1010.0);
-          const corrH = r.corrected_hum !== null && r.corrected_hum !== undefined ? parseFloat(r.corrected_hum) : (rawH !== null ? rawH : 60.0);
+          const corrP = r.corrected_pres !== null && r.corrected_pres !== undefined ? parseFloat(r.corrected_pres) : defaultBaseP;
+          const corrH = r.corrected_hum !== null && r.corrected_hum !== undefined ? parseFloat(r.corrected_hum) : defaultBaseH;
             
           return {
             ...r,
@@ -56,7 +63,7 @@ export default function StationDetail({ stationId, alerts = [], isPaused = false
     return () => {
       isMounted = false;
     };
-  }, [stationId]);
+  }, [stationId, defaultBaseT, defaultBaseP, defaultBaseH]);
 
   // Live real-time continuous ticker when streaming
   useEffect(() => {
@@ -69,9 +76,9 @@ export default function StationDetail({ stationId, alerts = [], isPaused = false
         const now = new Date();
         
         // Base values from station
-        const baseT = last.corrected_temp || 32.0;
-        const baseP = last.corrected_pres || 1010.0;
-        const baseH = last.corrected_hum || 60.0;
+        const baseT = defaultBaseT;
+        const baseP = defaultBaseP;
+        const baseH = defaultBaseH;
 
         // Check if there's a fresh active alert for this station in the last 6 seconds
         const stationAlerts = alertsRef.current || [];

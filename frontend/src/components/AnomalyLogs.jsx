@@ -7,7 +7,7 @@ export default function AnomalyLogs({ alerts: propAlerts = [], stations: propSta
   const [selectedCity, setSelectedCity] = useState('');
   const [selectedProblem, setSelectedProblem] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(true);
 
   const getStationName = (id) => (stations || []).find(s => s && s.station_id === id)?.name || id;
 
